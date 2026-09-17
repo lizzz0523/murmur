@@ -1,0 +1,41 @@
+use eframe::egui;
+
+mod app;
+use app::{App, get_window_size};
+
+mod audio;
+mod hotkey;
+mod recognizer;
+mod recorder;
+
+fn main() -> eframe::Result {
+    let (sw, sh) = get_resolution();
+    let (w, h) = get_window_size();
+
+    let native_options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_transparent(true)
+            .with_decorations(false)
+            .with_movable_by_background(true)
+            .with_always_on_top()
+            .with_inner_size([w, h])
+            .with_position(((sw - w) / 2.0, sh - h - 40.0))
+            .with_resizable(false),
+        ..Default::default()
+    };
+    eframe::run_native(
+        "eggg",
+        native_options,
+        Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx)))),
+    )
+}
+
+fn get_resolution() -> (f32, f32) {
+    use core_graphics::display::{CGDisplayBounds, CGMainDisplayID};
+
+    let bounds = unsafe { CGDisplayBounds(CGMainDisplayID()) };
+    let width = bounds.size.width;
+    let height = bounds.size.height;
+
+    (width as f32, height as f32)
+}
