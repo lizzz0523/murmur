@@ -6,7 +6,7 @@ use hf_hub::HFClient;
 use hf_hub::progress::{DownloadEvent, ProgressEvent, ProgressHandler};
 use mistralrs::{GgufModelBuilder, Model as LLMModel, TextMessageRole, TextMessages};
 use sherpa_onnx::{
-    OfflineFireRedAsrModelConfig, OfflineModelConfig, OfflineRecognizer, OfflineRecognizerConfig,
+    OfflineModelConfig, OfflineQwen3ASRModelConfig, OfflineRecognizer, OfflineRecognizerConfig,
     OfflineSpeechDenoiser, OfflineSpeechDenoiserConfig, OfflineSpeechDenoiserGtcrnModelConfig,
     OfflineSpeechDenoiserModelConfig, SileroVadModelConfig, VadModelConfig, VoiceActivityDetector,
 };
@@ -129,24 +129,29 @@ impl RecognizerInner {
         };
 
         let asr = {
-            let repos = client.model(
-                "csukuangfj2",
-                "sherpa-onnx-fire-red-asr2-zh_en-int8-2026-02-26",
-            );
+            let repos = client.model("csukuangfj2", "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25");
             let downloaded = repos
                 .snapshot_download()
-                .allow_patterns(vec!["*.onnx".to_string(), "tokens.txt".to_string()])
+                .allow_patterns(vec![
+                    "conv_frontend.onnx".to_string(),
+                    "encoder.int8.onnx".to_string(),
+                    "decoder.int8.onnx".to_string(),
+                    "tokenizer/*".to_string(),
+                ])
                 .max_workers(3)
                 .progress(PrintProgressHandler)
                 .send()
                 .await?;
             let config = OfflineRecognizerConfig {
                 model_config: OfflineModelConfig {
-                    fire_red_asr: OfflineFireRedAsrModelConfig {
+                    qwen3_asr: OfflineQwen3ASRModelConfig {
+                        conv_frontend: Some(path_string(&downloaded.join("conv_frontend.onnx"))),
                         encoder: Some(path_string(&downloaded.join("encoder.int8.onnx"))),
                         decoder: Some(path_string(&downloaded.join("decoder.int8.onnx"))),
+                        tokenizer: Some(path_string(&downloaded.join("tokenizer"))),
+                        max_new_tokens: 512,
+                        ..Default::default()
                     },
-                    tokens: Some(path_string(&downloaded.join("tokens.txt"))),
                     num_threads: 8,
                     ..Default::default()
                 },
