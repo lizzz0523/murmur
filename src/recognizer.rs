@@ -4,7 +4,7 @@ use std::sync::mpsc;
 use anyhow::{Context, anyhow};
 use hf_hub::HFClient;
 use hf_hub::progress::{DownloadEvent, ProgressEvent, ProgressHandler};
-use mistralrs::{GgufModelBuilder, Model as LLMModel, TextMessageRole, TextMessages};
+use mistralrs::{Model as LLMModel, TextMessageRole, TextMessages, TextModelBuilder};
 use sherpa_onnx::{
     OfflineModelConfig, OfflineQwen3ASRModelConfig, OfflineRecognizer, OfflineRecognizerConfig,
     OfflineSpeechDenoiser, OfflineSpeechDenoiserConfig, OfflineSpeechDenoiserGtcrnModelConfig,
@@ -88,11 +88,8 @@ const HIGH_PASS_HZ: f32 = 100.0;
 const TARGET_RMS_DBFS: f32 = -20.0;
 const MAX_GAIN_DB: f32 = 26.0;
 const PEAK_CEILING_DBFS: f32 = -1.0;
-const SYSTEM_PROMPT: &str = "你是语音转写文本的校对工具。输入是语音识别得到的口述文本，可能是中文、英文或中英混合，可能含错别字、重复、语气词或缺少标点。只做清理：删除语气词和重复、纠正明显的错别字、补全标点，逐词保持原语言不变，绝不翻译。数字、字母、型号和专有名词必须保持原有书面形态：阿拉伯数字仍写作阿拉伯数字，英文大小写和连字符原样保留，绝不把数字或英文改写成中文汉字或中文大写。";
-const EXAMPLE_INPUT: &str = "這個 feature 的 deadline 是下週五，麻煩先 submit 一個 pull request";
-const EXAMPLE_OUTPUT: &str = "这个 feature 的 deadline 是下周五，麻烦先 submit 一个 pull request。";
-const EXAMPLE_INPUT_2: &str = "我們用千问三杠一点七 B做校對，二零二四年的資料也要一起測";
-const EXAMPLE_OUTPUT_2: &str = "我们用 Qwen3-1.7B 做校对，2024 年的数据也要一起测。";
+const SYSTEM_PROMPT: &str =
+    "将中文口语转写改写为正式、自然的书面语。保持原意，不添加原文没有的信息，只输出改写后的文本。";
 
 struct RecognizerInner {
     llm: LLMModel,
@@ -189,15 +186,22 @@ impl RecognizerInner {
         };
 
         let llm = {
-            let repos = client.model("Qwen", "Qwen3-1.7B-GGUF");
-            let _ = repos
+            let repos = client.model("Aye10032", "Qwen3-ASR-Refiner-0.6B");
+            let downloaded = repos
                 .snapshot_download()
-                .allow_patterns(vec!["Qwen3-1.7B-Q8_0.gguf".to_string()])
+                .allow_patterns(vec![
+                    "config.json".to_string(),
+                    "generation_config.json".to_string(),
+                    "chat_template.jinja".to_string(),
+                    "tokenizer.json".to_string(),
+                    "tokenizer_config.json".to_string(),
+                    "model.safetensors".to_string(),
+                ])
                 .max_workers(3)
                 .progress(PrintProgressHandler)
                 .send()
                 .await?;
-            GgufModelBuilder::new("Qwen/Qwen3-1.7B-GGUF", vec!["Qwen3-1.7B-Q8_0.gguf"])
+            TextModelBuilder::new(path_string(&downloaded))
                 .build()
                 .await?
         };
@@ -228,10 +232,6 @@ impl RecognizerInner {
         let messages = TextMessages::new()
             .enable_thinking(false)
             .add_message(TextMessageRole::System, SYSTEM_PROMPT)
-            .add_message(TextMessageRole::User, EXAMPLE_INPUT)
-            .add_message(TextMessageRole::Assistant, EXAMPLE_OUTPUT)
-            .add_message(TextMessageRole::User, EXAMPLE_INPUT_2)
-            .add_message(TextMessageRole::Assistant, EXAMPLE_OUTPUT_2)
             .add_message(TextMessageRole::User, content);
 
         let response = self.llm.send_chat_request(messages).await?;
