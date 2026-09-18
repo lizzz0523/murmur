@@ -17,10 +17,3 @@ tokio = { version = "1.53.1", features = ["full"] }
 
 [patch.crates-io]
 mistralrs-core = { path = "third_party/mistral.rs/mistralrs-core" }
-
-# [profile.release]
-# opt-level = 'z'
-# lto = true
-# codegen-units = 1
-# panic = 'abort'
-# strip = true
