@@ -19,3 +19,10 @@ tray-icon = { version = "0.25.1", default-features = false }
 
 [patch.crates-io]
 mistralrs-core = { git = "https://github.com/lizzz0523/mistral.rs", rev = "91f154a58449ae21e0082814cd7bc304d9eb3db9" }
+
+[profile.release]
+opt-level = 'z'
+lto = true
+codegen-units = 1
+panic = 'abort'
+strip = true
