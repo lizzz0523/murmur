@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::path::Path;
 use std::sync::mpsc;
 
@@ -88,6 +89,9 @@ const HIGH_PASS_HZ: f32 = 100.0;
 const TARGET_RMS_DBFS: f32 = -20.0;
 const MAX_GAIN_DB: f32 = 26.0;
 const PEAK_CEILING_DBFS: f32 = -1.0;
+const SEGMENT_MARGIN_SECONDS: f32 = 0.8;
+const MERGE_GAP_SECONDS: f32 = 0.6;
+const MAX_CHUNK_SECONDS: f32 = 20.0;
 const SYSTEM_PROMPT: &str =
     "将中文口语转写改写为正式、自然的书面语。保持原意，不添加原文没有的信息，只输出改写后的文本。";
 
@@ -222,8 +226,8 @@ impl RecognizerInner {
         let mut samples = self.denoise(&samples);
         audio::limit_peak(&mut samples, PEAK_CEILING_DBFS);
 
-        let samples = self.filter(&samples);
-        let content = self.recognize(samples);
+        let segments = self.segments(&samples);
+        let content = self.recognize(&samples, &segments);
 
         self.refine(&content).await.unwrap_or(content)
     }
@@ -245,50 +249,76 @@ impl RecognizerInner {
             .to_string())
     }
 
-    fn recognize(&self, samples: &[f32]) -> String {
-        let stream = self.asr.create_stream();
-        stream.accept_waveform(TARGET_SAMPLE_RATE as i32, samples);
+    fn recognize(&self, samples: &[f32], segments: &[Range<usize>]) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        for segment in segments {
+            let stream = self.asr.create_stream();
+            stream.accept_waveform(TARGET_SAMPLE_RATE as i32, &samples[segment.clone()]);
 
-        self.asr.decode(&stream);
+            self.asr.decode(&stream);
 
-        stream
-            .get_result()
-            .map(|result| result.text.trim().to_string())
-            .unwrap_or_default()
+            let text = stream
+                .get_result()
+                .map(|result| result.text.trim().to_string())
+                .unwrap_or_default();
+            if !text.is_empty() {
+                parts.push(text);
+            }
+        }
+        parts.join("")
     }
 
-    fn filter<'a>(&self, samples: &'a [f32]) -> &'a [f32] {
+    fn segments(&self, samples: &[f32]) -> Vec<Range<usize>> {
         self.vad.reset();
 
-        let mut bounds: Option<(usize, usize)> = None;
-        let mut collect_bounds = || {
+        let mut detected: Vec<(usize, usize)> = Vec::new();
+        let mut collect_segments = || {
             while let Some(segment) = self.vad.front() {
                 let start = segment.start().max(0) as usize;
                 let end = start + segment.n().max(0) as usize;
-                bounds = Some(match &bounds {
-                    None => (start, end),
-                    Some(prev) => (prev.0.min(start), prev.1.max(end)),
-                });
+                detected.push((start, end));
                 self.vad.pop();
             }
         };
 
         for chunk in samples.chunks(512) {
             self.vad.accept_waveform(chunk);
-            collect_bounds();
+            collect_segments();
         }
         self.vad.flush();
-        collect_bounds();
+        collect_segments();
 
-        match bounds {
-            Some((start, end)) => {
-                let margin = (0.8 * TARGET_SAMPLE_RATE as f32) as usize;
-                let start = start.saturating_sub(margin);
-                let end = (end + margin).min(samples.len());
-                &samples[start..end]
-            }
-            None => samples,
+        if detected.is_empty() {
+            return vec![0..samples.len()];
         }
+
+        let margin = (SEGMENT_MARGIN_SECONDS * TARGET_SAMPLE_RATE as f32) as usize;
+        let merge_gap = (MERGE_GAP_SECONDS * TARGET_SAMPLE_RATE as f32) as usize;
+        let max_chunk = (MAX_CHUNK_SECONDS * TARGET_SAMPLE_RATE as f32) as usize;
+
+        let mut merged: Vec<(usize, usize)> = Vec::with_capacity(detected.len());
+        for &(start, end) in &detected {
+            let start = start.saturating_sub(margin);
+            let end = (end + margin).min(samples.len());
+            match merged.last_mut() {
+                Some(prev) if start <= prev.1 + merge_gap => prev.1 = prev.1.max(end),
+                _ => merged.push((start, end)),
+            }
+        }
+
+        let mut segments = Vec::new();
+        for (start, end) in merged {
+            let mut chunk_start = start;
+            while end - chunk_start > max_chunk {
+                segments.push(chunk_start..chunk_start + max_chunk);
+                chunk_start += max_chunk;
+            }
+            if chunk_start < end {
+                segments.push(chunk_start..end);
+            }
+        }
+
+        segments
     }
 
     fn denoise(&self, samples: &[f32]) -> Vec<f32> {
