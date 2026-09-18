@@ -1,11 +1,13 @@
+use std::collections::HashMap;
 use std::iter;
 use std::ops::Range;
 use std::path::Path;
-use std::sync::mpsc;
+use std::sync::{Mutex, mpsc};
 
 use anyhow::{Context, anyhow};
 use hf_hub::HFClient;
 use hf_hub::progress::{DownloadEvent, ProgressEvent, ProgressHandler};
+use indicatif::{ProgressBar, ProgressStyle};
 use mistralrs::{Model as LLMModel, TextMessageRole, TextMessages, TextModelBuilder};
 use sherpa_onnx::{
     OfflineModelConfig, OfflineQwen3ASRModelConfig, OfflineRecognizer, OfflineRecognizerConfig,
@@ -113,7 +115,7 @@ impl RecognizerInner {
                 .snapshot_download()
                 .allow_patterns(vec!["gtcrn_simple.onnx".to_string()])
                 .max_workers(1)
-                .progress(PrintProgressHandler)
+                .progress(PrintProgressHandler::new("gtcrn"))
                 .send()
                 .await?;
             let config = OfflineSpeechDenoiserConfig {
@@ -141,7 +143,7 @@ impl RecognizerInner {
                     "tokenizer/*".to_string(),
                 ])
                 .max_workers(3)
-                .progress(PrintProgressHandler)
+                .progress(PrintProgressHandler::new("qwen3-asr-0.6B"))
                 .send()
                 .await?;
             let config = OfflineRecognizerConfig {
@@ -169,7 +171,7 @@ impl RecognizerInner {
                 .snapshot_download()
                 .allow_patterns(vec!["silero_vad_v5.onnx".to_string()])
                 .max_workers(3)
-                .progress(PrintProgressHandler)
+                .progress(PrintProgressHandler::new("silero-vad-v5"))
                 .send()
                 .await?;
             let config = VadModelConfig {
@@ -203,7 +205,7 @@ impl RecognizerInner {
                     "model.safetensors".to_string(),
                 ])
                 .max_workers(3)
-                .progress(PrintProgressHandler)
+                .progress(PrintProgressHandler::new("qwen3-asr-refiner-0.6b"))
                 .send()
                 .await?;
             TextModelBuilder::new(path_string(&downloaded))
@@ -335,24 +337,79 @@ impl RecognizerInner {
     }
 }
 
-struct PrintProgressHandler;
+const BAR_WIDTH: usize = 24;
+const LABEL_WIDTH: usize = 22;
+
+struct PrintProgressHandler {
+    bar: ProgressBar,
+    files: Mutex<HashMap<String, u64>>,
+}
+
+impl PrintProgressHandler {
+    fn new(model: &'static str) -> Self {
+        let bar = ProgressBar::new(0);
+        bar.set_style(
+            ProgressStyle::with_template(&format!(
+                "{{spinner:.green}} {{prefix:<{LABEL_WIDTH}}} [{{bar:{BAR_WIDTH}.cyan/blue}}] {{bytes}}/{{total_bytes}}"
+            ))
+            .expect("invalid progress template")
+            .progress_chars("=> "),
+        );
+        bar.set_prefix(model);
+
+        Self {
+            bar,
+            files: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn set_position(&self, position: u64) {
+        if position > self.bar.position() {
+            self.bar.set_position(position);
+        }
+    }
+
+    fn set_length(&self, length: u64) {
+        if self.bar.length().is_none_or(|current| length > current) {
+            self.bar.set_length(length);
+        }
+    }
+}
 
 impl ProgressHandler for PrintProgressHandler {
     fn on_progress(&self, event: &ProgressEvent) {
         let ProgressEvent::Download(event) = event else {
             return;
         };
+
         match event {
-            DownloadEvent::Start {
-                total_files,
+            DownloadEvent::Start { total_bytes, .. } => {
+                self.files
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner())
+                    .clear();
+                self.set_length(*total_bytes);
+            }
+            DownloadEvent::Progress { files } => {
+                let sum = {
+                    let mut tracked = self.files.lock().unwrap_or_else(|err| err.into_inner());
+                    for file in files {
+                        let entry = tracked.entry(file.filename.clone()).or_insert(0);
+                        *entry = (*entry).max(file.bytes_completed);
+                    }
+                    tracked.values().copied().sum()
+                };
+                self.set_position(sum);
+            }
+            DownloadEvent::AggregateProgress {
+                bytes_completed,
                 total_bytes,
+                ..
             } => {
-                println!("start download models, total files: {total_files} bytes: {total_bytes}");
+                self.set_length(*total_bytes);
+                self.set_position(*bytes_completed);
             }
-            DownloadEvent::Complete => {
-                println!("models download complete");
-            }
-            _ => {}
+            DownloadEvent::Complete => self.bar.finish(),
         }
     }
 }

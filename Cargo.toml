@@ -11,6 +11,7 @@ eframe = "0.36.2"
 enigo = "0.6.1"
 handy-keys = "0.3.4"
 hf-hub = "1.0.0"
+indicatif = "0.18"
 mistralrs = {version = "0.8.1", features = ["metal"] }
 sherpa-onnx = "1.13.8"
 tokio = { version = "1.53.1", features = ["full"] }
