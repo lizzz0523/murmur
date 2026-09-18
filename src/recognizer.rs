@@ -92,10 +92,10 @@ const SYSTEM_PROMPT: &str =
     "将中文口语转写改写为正式、自然的书面语。保持原意，不添加原文没有的信息，只输出改写后的文本。";
 
 struct RecognizerInner {
-    llm: LLMModel,
+    denoiser: OfflineSpeechDenoiser,
     asr: OfflineRecognizer,
     vad: VoiceActivityDetector,
-    denoiser: OfflineSpeechDenoiser,
+    refiner: LLMModel,
 }
 
 impl RecognizerInner {
@@ -185,7 +185,7 @@ impl RecognizerInner {
             vad.with_context(|| "failed to create recognizer")?
         };
 
-        let llm = {
+        let refiner = {
             let repos = client.model("Aye10032", "Qwen3-ASR-Refiner-0.6B");
             let downloaded = repos
                 .snapshot_download()
@@ -207,10 +207,10 @@ impl RecognizerInner {
         };
 
         Ok(Self {
-            llm,
+            denoiser,
             asr,
             vad,
-            denoiser,
+            refiner,
         })
     }
 
@@ -219,22 +219,22 @@ impl RecognizerInner {
         let samples = audio::high_pass(&samples, TARGET_SAMPLE_RATE, HIGH_PASS_HZ);
         let samples = audio::normalize(&samples, TARGET_RMS_DBFS, MAX_GAIN_DB);
 
-        let mut denoised = self.denoise(&samples);
-        audio::limit_peak(&mut denoised, PEAK_CEILING_DBFS);
+        let mut samples = self.denoise(&samples);
+        audio::limit_peak(&mut samples, PEAK_CEILING_DBFS);
 
-        let samples = self.filter(&denoised);
+        let samples = self.filter(&samples);
         let content = self.recognize(samples);
 
-        self.polish(&content).await.unwrap_or(content)
+        self.refine(&content).await.unwrap_or(content)
     }
 
-    async fn polish(&self, content: &str) -> anyhow::Result<String> {
+    async fn refine(&self, content: &str) -> anyhow::Result<String> {
         let messages = TextMessages::new()
             .enable_thinking(false)
             .add_message(TextMessageRole::System, SYSTEM_PROMPT)
             .add_message(TextMessageRole::User, content);
 
-        let response = self.llm.send_chat_request(messages).await?;
+        let response = self.refiner.send_chat_request(messages).await?;
 
         Ok(response.choices[0]
             .message
