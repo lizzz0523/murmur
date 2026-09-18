@@ -44,7 +44,7 @@ impl Tray {
         let tray = TrayIconBuilder::new()
             .with_icon(load_icon()?)
             .with_icon_as_template(true)
-            .with_tooltip("eggg")
+            .with_tooltip("murmur")
             .with_menu(Box::new(menu))
             .build()?;
 

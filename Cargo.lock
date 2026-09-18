@@ -4926,6 +4926,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
+name = "murmur"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "core-graphics 0.25.0",
+ "cpal",
+ "eframe",
+ "enigo",
+ "handy-keys",
+ "hf-hub 1.0.0",
+ "mistralrs",
+ "sherpa-onnx",
+ "tokio",
+ "tray-icon",
+]
+
+[[package]]
 name = "naga"
 version = "30.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8133,23 +8150,6 @@ checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix 1.1.4",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "test-egggg"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "core-graphics 0.25.0",
- "cpal",
- "eframe",
- "enigo",
- "handy-keys",
- "hf-hub 1.0.0",
- "mistralrs",
- "sherpa-onnx",
- "tokio",
- "tray-icon",
 ]
 
 [[package]]
