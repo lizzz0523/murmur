@@ -147,7 +147,7 @@ impl App {
             match &self.state {
                 State::Loading(_) => self.draw_loading(ui),
                 State::Failed => self.draw_text(ui, "Error"),
-                State::Ready => self.draw_text(ui, "Ready"),
+                State::Ready => self.draw_text(ui, "Murmur"),
                 State::Recording => self.draw_recording(ui),
                 State::Recognizing => {
                     let dots = ((ui.input(|i| i.time) * 2.5) as usize) % 4;
