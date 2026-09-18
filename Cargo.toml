@@ -14,6 +14,7 @@ hf-hub = "1.0.0"
 mistralrs = {version = "0.8.1", features = ["metal"] }
 sherpa-onnx = "1.13.8"
 tokio = { version = "1.53.1", features = ["full"] }
+tray-icon = { version = "0.25.1", default-features = false }
 
 [patch.crates-io]
 mistralrs-core = { path = "third_party/mistral.rs/mistralrs-core" }

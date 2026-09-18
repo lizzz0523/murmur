@@ -7,6 +7,7 @@ mod audio;
 mod hotkey;
 mod recognizer;
 mod recorder;
+mod tray;
 
 fn main() -> eframe::Result {
     let (sw, sh) = get_resolution();

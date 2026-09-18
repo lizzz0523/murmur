@@ -1,4 +1,4 @@
-use std::f32::consts::PI;
+use std::f32::consts::{FRAC_1_SQRT_2, PI};
 
 pub fn resample_linear(samples: &[f32], sample_rate: u32, output_sample_rate: u32) -> Vec<f32> {
     if samples.is_empty() || sample_rate == output_sample_rate {
@@ -23,7 +23,7 @@ pub fn high_pass(samples: &[f32], sample_rate: u32, cutoff_hz: f32) -> Vec<f32> 
         return vec![];
     }
 
-    let q = std::f32::consts::FRAC_1_SQRT_2;
+    let q = FRAC_1_SQRT_2;
     let w0 = 2.0 * PI * cutoff_hz / sample_rate as f32;
     let cos_w0 = w0.cos();
     let alpha = w0.sin() / (2.0 * q);
@@ -97,9 +97,7 @@ pub fn normalize(samples: &[f32], target_rms_dbfs: f32, max_gain_db: f32) -> Vec
 }
 
 pub fn limit_peak(samples: &mut [f32], ceiling_dbfs: f32) {
-    let peak = samples
-        .iter()
-        .fold(0.0f32, |acc, s| acc.max(s.abs()));
+    let peak = samples.iter().fold(0.0f32, |acc, s| acc.max(s.abs()));
     if peak <= 1e-9 {
         return;
     }

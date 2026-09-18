@@ -1,57 +1,106 @@
 use std::sync::mpsc;
 
+use anyhow::{anyhow, bail};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
+pub struct InputDevice {
+    pub id: String,
+    pub name: String,
+    pub is_default: bool,
+}
+
 pub struct Recorder {
+    host: cpal::Host,
+    tx: mpsc::Sender<Vec<f32>>,
     rx: mpsc::Receiver<Vec<f32>>,
     samples: Vec<f32>,
     sample_rate: u32,
     smooth_rms: f32,
     stream: cpal::Stream,
+    device_id: String,
 }
 
 impl Recorder {
-    pub fn new() -> Self {
-        let (tx, rx) = mpsc::channel();
-
+    pub fn new() -> anyhow::Result<Self> {
         let host = cpal::default_host();
-        let device = host.default_input_device().unwrap();
-        let config = device.default_input_config().unwrap();
+        let device = host
+            .default_input_device()
+            .or_else(|| host.input_devices().ok()?.find(|d| d.supports_input()))
+            .ok_or_else(|| anyhow!("no input device available"))?;
 
-        let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => device
-                .build_input_stream(
-                    config.into(),
-                    move |data: &[f32], _info| {
-                        let _ = tx.send(data.to_vec());
-                    },
-                    |_err| {},
-                    None,
-                )
-                .unwrap(),
-            _ => unimplemented!(),
-        };
+        let (tx, rx) = mpsc::channel();
+        let (stream, sample_rate) = build_stream(&device, &tx)?;
+        let device_id = device.id().map(|id| id.to_string()).unwrap_or_default();
 
-        Self {
+        Ok(Self {
+            host,
+            tx,
             rx,
             samples: vec![],
-            sample_rate: config.sample_rate(),
+            sample_rate,
             smooth_rms: 0.0,
             stream,
-        }
+            device_id,
+        })
     }
 
-    pub fn start(&mut self) {
+    pub fn current_device(&self) -> &str {
+        &self.device_id
+    }
+
+    pub fn list_devices(&self) -> Vec<InputDevice> {
+        let default_id = self.host.default_input_device().and_then(|d| d.id().ok());
+
+        self.host
+            .input_devices()
+            .map(|devices| {
+                devices
+                    .filter(|device| device.supports_input())
+                    .map(|device| {
+                        let id = device.id().ok();
+                        InputDevice {
+                            name: device.to_string(),
+                            is_default: id.as_ref() == default_id.as_ref(),
+                            id: id.map(|id| id.to_string()).unwrap_or_default(),
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn select_device(&mut self, id: &str) -> anyhow::Result<()> {
+        let device_id: cpal::DeviceId = id.parse()?;
+        let device = self
+            .host
+            .device_by_id(&device_id)
+            .ok_or_else(|| anyhow!("input device not found: {id}"))?;
+
+        let _ = self.stream.pause();
+        let (stream, sample_rate) = build_stream(&device, &self.tx)?;
+
+        self.stream = stream;
+        self.sample_rate = sample_rate;
+        self.device_id = id.to_string();
+        self.samples.clear();
+        self.smooth_rms = 0.0;
         while self.rx.try_recv().is_ok() {}
-        self.stream.play().unwrap();
+
+        Ok(())
     }
 
-    pub fn stop(&mut self) -> Vec<f32> {
-        self.stream.pause().unwrap();
+    pub fn start(&mut self) -> anyhow::Result<()> {
+        while self.rx.try_recv().is_ok() {}
+        self.stream.play()?;
+        Ok(())
+    }
+
+    pub fn stop(&mut self) -> anyhow::Result<Vec<f32>> {
+        self.stream.pause()?;
         while let Ok(samples) = self.rx.try_recv() {
             self.samples.extend_from_slice(&samples[..]);
         }
-        self.samples.drain(..).collect()
+        Ok(self.samples.drain(..).collect())
     }
 
     pub fn poll(&mut self) {
@@ -83,4 +132,28 @@ impl Recorder {
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
+}
+
+fn build_stream(
+    device: &cpal::Device,
+    tx: &mpsc::Sender<Vec<f32>>,
+) -> anyhow::Result<(cpal::Stream, u32)> {
+    let config = device.default_input_config()?;
+    let sample_rate = config.sample_rate();
+
+    if config.sample_format() != cpal::SampleFormat::F32 {
+        bail!("unsupported sample format: {:?}", config.sample_format());
+    }
+
+    let tx = tx.clone();
+    let stream = device.build_input_stream(
+        config.config(),
+        move |data: &[f32], _info| {
+            let _ = tx.send(data.to_vec());
+        },
+        |err| eprintln!("input stream error: {err}"),
+        None,
+    )?;
+
+    Ok((stream, sample_rate))
 }

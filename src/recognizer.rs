@@ -1,3 +1,4 @@
+use std::iter;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::mpsc;
@@ -289,7 +290,7 @@ impl RecognizerInner {
         collect_segments();
 
         if detected.is_empty() {
-            return vec![0..samples.len()];
+            return iter::once(0..samples.len()).collect();
         }
 
         let margin = (SEGMENT_MARGIN_SECONDS * TARGET_SAMPLE_RATE as f32) as usize;

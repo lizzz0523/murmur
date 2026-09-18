@@ -6,6 +6,7 @@ use enigo::{Enigo, Keyboard};
 use crate::hotkey::Hotkey;
 use crate::recognizer::{ReadyHook, Recognizer};
 use crate::recorder::Recorder;
+use crate::tray::{Tray, TrayAction};
 
 enum State {
     Loading(ReadyHook),
@@ -16,6 +17,7 @@ enum State {
 }
 
 pub struct App {
+    tray: Tray,
     hotkey: Hotkey,
     recorder: Recorder,
     recognizer: Recognizer,
@@ -26,10 +28,16 @@ pub struct App {
 impl App {
     pub fn new(ctx: &egui::Context) -> Self {
         let (recognizer, ready_hook) = Recognizer::load().unwrap();
+        let recorder = Recorder::new().unwrap();
+        let tray = Tray::new(ctx).unwrap();
+        let hotkey = Hotkey::new(ctx).unwrap();
+
+        tray.set_devices(&recorder.list_devices(), recorder.current_device());
 
         Self {
-            hotkey: Hotkey::new(ctx).unwrap(),
-            recorder: Recorder::new(),
+            tray,
+            hotkey,
+            recorder,
             recognizer,
             state: State::Loading(ready_hook),
             enigo: Enigo::new(&enigo::Settings::default()).unwrap(),
@@ -40,7 +48,7 @@ impl App {
         if !matches!(self.state, State::Ready) {
             return;
         }
-        self.recorder.start();
+        self.recorder.start().unwrap();
         self.state = State::Recording;
     }
 
@@ -48,7 +56,7 @@ impl App {
         if !matches!(self.state, State::Recording) {
             return;
         }
-        let samples = self.recorder.stop();
+        let samples = self.recorder.stop().unwrap();
         let sample_rate = self.recorder.sample_rate();
         if !samples.is_empty() {
             self.recognizer.run(samples, sample_rate);
@@ -66,7 +74,7 @@ impl App {
         self.state = State::Ready;
     }
 
-    fn poll_state(&mut self, ctx: &egui::Context) {
+    fn handle_state(&mut self, ctx: &egui::Context) {
         self.recorder.poll();
 
         match &self.state {
@@ -97,6 +105,29 @@ impl App {
         }
         if matches!(self.state, State::Recognizing | State::Recording) {
             ctx.request_repaint_after(Duration::from_millis(33));
+        }
+    }
+
+    fn handle_tray(&mut self, ctx: &egui::Context) {
+        while let Some(action) = self.tray.poll() {
+            match action {
+                TrayAction::SelectDevice(id) => {
+                    if !matches!(self.state, State::Recording | State::Recognizing)
+                        && self.recorder.select_device(&id).is_ok()
+                    {
+                        self.tray.set_selected_device(&id);
+                    }
+                }
+                TrayAction::RefreshDevices => {
+                    self.tray.set_devices(
+                        &self.recorder.list_devices(),
+                        self.recorder.current_device(),
+                    );
+                }
+                TrayAction::Quit => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
         }
     }
 
@@ -208,8 +239,12 @@ impl eframe::App for App {
         egui::Rgba::TRANSPARENT.to_array()
     }
 
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.handle_tray(ctx);
+        self.handle_state(ctx);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.poll_state(ui.ctx());
         self.draw_ui(ui);
     }
 }
