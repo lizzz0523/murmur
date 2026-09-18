@@ -1,3 +1,4 @@
+use std::process;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
@@ -11,6 +12,13 @@ pub struct Hotkey {
 
 impl Hotkey {
     pub fn new(ctx: &egui::Context) -> anyhow::Result<Self> {
+        if !handy_keys::check_accessibility() {
+            if let Err(err) = handy_keys::open_accessibility_settings() {
+                eprintln!("{err}");
+            }
+            process::exit(0);
+        }
+
         let listener = handy_keys::KeyboardListener::new()?;
         let pressed = Arc::new(AtomicBool::new(false));
 
