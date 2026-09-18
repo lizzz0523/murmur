@@ -20,6 +20,7 @@ fn main() -> eframe::Result {
             .with_always_on_top()
             .with_inner_size([w, h])
             .with_position(((sw - w) / 2.0, sh - h - 40.0))
+            .with_icon(load_icon())
             .with_resizable(false),
         ..Default::default()
     };
@@ -28,6 +29,11 @@ fn main() -> eframe::Result {
         native_options,
         Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx)))),
     )
+}
+
+fn load_icon() -> egui::IconData {
+    eframe::icon_data::from_png_bytes(include_bytes!("../assets/appicon.png"))
+        .expect("failed to load app icon")
 }
 
 fn get_resolution() -> (f32, f32) {
