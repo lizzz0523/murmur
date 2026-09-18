@@ -18,20 +18,17 @@ impl Hotkey {
         let spawn_ctx = ctx.clone();
         let handle = thread::spawn(move || {
             while let Ok(evt) = listener.recv() {
-                if evt.is_key_down {
-                    if evt.modifiers.contains(handy_keys::Modifiers::CTRL_RIGHT)
-                        && !spawn_pressed.load(Ordering::Relaxed)
-                    {
-                        spawn_pressed.store(true, Ordering::Relaxed);
-                        spawn_ctx.request_repaint();
-                    }
-                } else {
-                    if spawn_pressed.load(Ordering::Relaxed)
-                        && !evt.modifiers.contains(handy_keys::Modifiers::CTRL_RIGHT)
-                    {
-                        spawn_pressed.store(false, Ordering::Relaxed);
-                        spawn_ctx.request_repaint();
-                    }
+                let contains = evt
+                    .modifiers
+                    .intersects(handy_keys::Modifiers::CTRL_RIGHT | handy_keys::Modifiers::FN);
+
+                if evt.is_key_down && contains && !spawn_pressed.load(Ordering::Relaxed) {
+                    spawn_pressed.store(true, Ordering::Relaxed);
+                    spawn_ctx.request_repaint();
+                }
+                if !contains && spawn_pressed.load(Ordering::Relaxed) {
+                    spawn_pressed.store(false, Ordering::Relaxed);
+                    spawn_ctx.request_repaint();
                 }
             }
         });
