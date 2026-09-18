@@ -18,6 +18,9 @@ impl Hotkey {
         let spawn_ctx = ctx.clone();
         let handle = thread::spawn(move || {
             while let Ok(evt) = listener.recv() {
+                if evt.key.is_some() {
+                    continue;
+                }
                 let contains = evt
                     .modifiers
                     .intersects(handy_keys::Modifiers::CTRL_RIGHT | handy_keys::Modifiers::FN);
