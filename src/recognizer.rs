@@ -88,15 +88,15 @@ impl Recognizer {
 }
 
 const TARGET_SAMPLE_RATE: u32 = 16_000;
+
 const HIGH_PASS_HZ: f32 = 100.0;
 const TARGET_RMS_DBFS: f32 = -20.0;
 const MAX_GAIN_DB: f32 = 26.0;
 const PEAK_CEILING_DBFS: f32 = -1.0;
+
 const SEGMENT_MARGIN_SECONDS: f32 = 0.8;
 const MERGE_GAP_SECONDS: f32 = 0.6;
 const MAX_CHUNK_SECONDS: f32 = 20.0;
-const SYSTEM_PROMPT: &str =
-    "将中文口语转写改写为正式、自然的书面语。保持原意，不添加原文没有的信息，只输出改写后的文本。";
 
 struct RecognizerInner {
     denoiser: OfflineSpeechDenoiser,
@@ -238,7 +238,7 @@ impl RecognizerInner {
     async fn refine(&self, content: &str) -> anyhow::Result<String> {
         let messages = TextMessages::new()
             .enable_thinking(false)
-            .add_message(TextMessageRole::System, SYSTEM_PROMPT)
+            .add_message(TextMessageRole::System, "将中文口语转写改写为正式、自然的书面语。保持原意，不添加原文没有的信息，只输出改写后的文本。")
             .add_message(TextMessageRole::User, content);
 
         let response = self.refiner.send_chat_request(messages).await?;
@@ -337,9 +337,6 @@ impl RecognizerInner {
     }
 }
 
-const BAR_WIDTH: usize = 24;
-const LABEL_WIDTH: usize = 22;
-
 struct PrintProgressHandler {
     bar: ProgressBar,
     files: Mutex<HashMap<String, u64>>,
@@ -347,6 +344,9 @@ struct PrintProgressHandler {
 
 impl PrintProgressHandler {
     fn new(model: &'static str) -> Self {
+        const BAR_WIDTH: usize = 24;
+        const LABEL_WIDTH: usize = 22;
+
         let bar = ProgressBar::new(0);
         bar.set_style(
             ProgressStyle::with_template(&format!(
