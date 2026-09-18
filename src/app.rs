@@ -118,7 +118,10 @@ impl App {
                 State::Failed => self.draw_text(ui, "Error"),
                 State::Ready => self.draw_text(ui, "Ready"),
                 State::Recording => self.draw_recording(ui),
-                State::Recognizing => self.draw_text(ui, "Thinking"),
+                State::Recognizing => {
+                    let dots = ((ui.input(|i| i.time) * 2.5) as usize) % 4;
+                    self.draw_text(ui, &format!("Thinking{}", ".".repeat(dots)));
+                }
             }
         });
     }
