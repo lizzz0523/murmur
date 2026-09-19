@@ -8,17 +8,15 @@ anyhow = "1.0.104"
 core-graphics = "0.25.0"
 cpal = "0.18.2"
 eframe = "0.36.2"
+encoding_rs = "0.8.35"
 enigo = "0.6.1"
 handy-keys = "0.3.4"
 hf-hub = "1.0.0"
 indicatif = "0.18"
-mistralrs = {version = "0.8.1", features = ["metal"] }
+llama-cpp-2 = "0.1.156"
 sherpa-onnx = "1.13.8"
 tokio = { version = "1.53.1", features = ["full"] }
 tray-icon = { version = "0.25.1", default-features = false }
-
-[patch.crates-io]
-mistralrs-core = { git = "https://github.com/lizzz0523/mistral.rs", rev = "91f154a58449ae21e0082814cd7bc304d9eb3db9" }
 
 [profile.release]
 opt-level = 'z'

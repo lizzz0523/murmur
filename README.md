@@ -14,7 +14,7 @@ macOS 上的本地语音输入工具：按住快捷键说话，松开后自动�
 
 ```
 录音 → 重采样到 16kHz → 高通滤波 → 响度归一化 → GTCRN 降噪 → 峰值限制
-    → Silero VAD 分段 → Qwen3-ASR 识别 → Qwen3-ASR-Refiner 润色
+    → Silero VAD 分段 → Qwen3-ASR 识别 → Qwen3-1.7B 润色
     → 粘贴
 ```
 
@@ -23,6 +23,7 @@ macOS 上的本地语音输入工具：按住快捷键说话，松开后自动�
 - macOS
 - Rust 1.90 或更高（edition 2024）
 - 首次运行需要联网下载模型（之后缓存复用）
+- 从源码构建需要 `cmake` 与 `clang`（`llama-cpp-sys` 会用 cmake + bindgen 编译 llama.cpp）；若 bindgen 找不到 `libclang`，设置 `LIBCLANG_PATH` 指向包含 `libclang.dylib` 的目录。
 
 ## 构建与运行
 
@@ -30,7 +31,7 @@ macOS 上的本地语音输入工具：按住快捷键说话，松开后自动�
 cargo build --release
 ```
 
-首次启动会通过 Hugging Face 下载所需模型，耗时取决于网络。
+首次构建会现场编译 llama.cpp，耗时较长；首次启动会通过 Hugging Face 下载所需模型，耗时取决于网络。国内网络可设置 `HF_ENDPOINT=https://hf-mirror.com` 走镜像。
 
 首次使用需在「系统设置 → 隐私与安全性」中授权：
 
@@ -55,7 +56,7 @@ cargo build --release
 | 语音降噪 | `csukuangfj/speech-enhancement-models` |
 | 语音识别 | `csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25` |
 | 语音活动检测 | `csukuangfj/vad` |
-| 文本润色 | `Aye10032/Qwen3-ASR-Refiner-0.6B` |
+| 文本润色 | `unsloth/Qwen3-1.7B-GGUF` |
 
 模型下载后由 `hf-hub` 缓存在本地。
 
@@ -64,7 +65,7 @@ cargo build --release
 - [`eframe`](https://crates.io/crates/eframe) / `egui`：悬浮窗口与界面绘制
 - [`cpal`](https://crates.io/crates/cpal)：音频采集
 - [`sherpa-onnx`](https://crates.io/crates/sherpa-onnx)：降噪、VAD 与 ASR
-- [`mistralrs`](https://crates.io/crates/mistralrs)：文本润色（Metal 加速）
+- [`llama-cpp-2`](https://crates.io/crates/llama-cpp-2)：文本润色（GGUF + Metal 加速）
 - [`handy-keys`](https://crates.io/crates/handy-keys) / [`enigo`](https://crates.io/crates/enigo)：全局快捷键与模拟输入
 - [`tray-icon`](https://crates.io/crates/tray-icon)：菜单栏图标与菜单
 
@@ -76,7 +77,8 @@ src/
 ├── app.rs         应用状态机与界面绘制
 ├── recorder.rs    音频录制、设备枚举与切换
 ├── audio.rs       重采样、高通滤波、归一化、峰值限制
-├── recognizer.rs  降噪、VAD 分段、ASR 与文本润色
+├── recognizer.rs  降噪、VAD 分段、ASR 与模型下载
+├── refiner.rs     Qwen3 文本润色（llama.cpp 推理）
 ├── hotkey.rs      全局快捷键监听
 └── tray.rs        菜单栏图标与菜单
 assets/            应用图标与托盘模板图标

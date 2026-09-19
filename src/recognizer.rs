@@ -8,7 +8,6 @@ use anyhow::{Context, anyhow};
 use hf_hub::HFClient;
 use hf_hub::progress::{DownloadEvent, ProgressEvent, ProgressHandler};
 use indicatif::{ProgressBar, ProgressStyle};
-use mistralrs::{Model as LLMModel, TextMessageRole, TextMessages, TextModelBuilder};
 use sherpa_onnx::{
     OfflineModelConfig, OfflineQwen3ASRModelConfig, OfflineRecognizer, OfflineRecognizerConfig,
     OfflineSpeechDenoiser, OfflineSpeechDenoiserConfig, OfflineSpeechDenoiserGtcrnModelConfig,
@@ -17,6 +16,7 @@ use sherpa_onnx::{
 use tokio::sync::mpsc as tokio_mpsc;
 
 use crate::audio;
+use crate::refiner::Refiner;
 
 pub struct ReadyHook(mpsc::Receiver<anyhow::Result<()>>);
 
@@ -65,7 +65,7 @@ impl Recognizer {
                         samples,
                         sample_rate,
                     } => {
-                        let result = inner.run(&samples, sample_rate).await;
+                        let result = inner.run(&samples, sample_rate);
                         let _ = tx_spawn.send(result);
                     }
                 }
@@ -102,7 +102,7 @@ struct RecognizerInner {
     denoiser: OfflineSpeechDenoiser,
     asr: OfflineRecognizer,
     vad: VoiceActivityDetector,
-    refiner: LLMModel,
+    refiner: Refiner,
 }
 
 impl RecognizerInner {
@@ -193,24 +193,15 @@ impl RecognizerInner {
         };
 
         let refiner = {
-            let repos = client.model("Aye10032", "Qwen3-ASR-Refiner-0.6B");
+            let repos = client.model("unsloth", "Qwen3-1.7B-GGUF");
             let downloaded = repos
                 .snapshot_download()
-                .allow_patterns(vec![
-                    "config.json".to_string(),
-                    "generation_config.json".to_string(),
-                    "chat_template.jinja".to_string(),
-                    "tokenizer.json".to_string(),
-                    "tokenizer_config.json".to_string(),
-                    "model.safetensors".to_string(),
-                ])
-                .max_workers(3)
-                .progress(PrintProgressHandler::new("qwen3-asr-refiner-0.6b"))
+                .allow_patterns(vec!["Qwen3-1.7B-Q4_K_M.gguf".to_string()])
+                .max_workers(1)
+                .progress(PrintProgressHandler::new("qwen3-1.7b-gguf"))
                 .send()
                 .await?;
-            TextModelBuilder::new(path_string(&downloaded))
-                .build()
-                .await?
+            Refiner::load(&downloaded.join("Qwen3-1.7B-Q4_K_M.gguf"))?
         };
 
         Ok(Self {
@@ -221,7 +212,7 @@ impl RecognizerInner {
         })
     }
 
-    async fn run(&self, samples: &[f32], sample_rate: u32) -> String {
+    fn run(&self, samples: &[f32], sample_rate: u32) -> String {
         let mut samples = audio::resample_linear(samples, sample_rate, TARGET_SAMPLE_RATE);
         audio::high_pass(&mut samples, TARGET_SAMPLE_RATE, HIGH_PASS_HZ);
         audio::normalize(&mut samples, TARGET_RMS_DBFS, MAX_GAIN_DB);
@@ -232,24 +223,7 @@ impl RecognizerInner {
         let segments = self.segments(&samples);
         let content = self.recognize(&samples, &segments);
 
-        self.refine(&content).await.unwrap_or(content)
-    }
-
-    async fn refine(&self, content: &str) -> anyhow::Result<String> {
-        let messages = TextMessages::new()
-            .enable_thinking(false)
-            .add_message(TextMessageRole::System, "将中文口语转写改写为正式、自然的书面语。保持原意，不添加原文没有的信息。可以纠正明显的同音字、近音字、专有名词和技术术语的识别错误；只在有把握时纠正，不确定则保留原文。只输出改写后的文本，不要任何解释。")
-            .add_message(TextMessageRole::User, content);
-
-        let response = self.refiner.send_chat_request(messages).await?;
-
-        Ok(response.choices[0]
-            .message
-            .content
-            .as_deref()
-            .unwrap_or_default()
-            .trim()
-            .to_string())
+        self.refiner.refine(&content).unwrap_or(content)
     }
 
     fn recognize(&self, samples: &[f32], segments: &[Range<usize>]) -> String {
