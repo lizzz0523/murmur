@@ -3,6 +3,8 @@ use std::sync::mpsc;
 use anyhow::{anyhow, bail};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
+use crate::audio;
+
 pub struct InputDevice {
     pub id: String,
     pub name: String,
@@ -139,6 +141,7 @@ fn build_stream(
     tx: &mpsc::Sender<Vec<f32>>,
 ) -> anyhow::Result<(cpal::Stream, u32)> {
     let config = device.default_input_config()?;
+    let channels = config.channels();
     let sample_rate = config.sample_rate();
 
     if config.sample_format() != cpal::SampleFormat::F32 {
@@ -149,7 +152,7 @@ fn build_stream(
     let stream = device.build_input_stream(
         config.config(),
         move |data: &[f32], _info| {
-            let _ = tx.send(data.to_vec());
+            let _ = tx.send(audio::downmix(data, channels));
         },
         |err| eprintln!("input stream error: {err}"),
         None,

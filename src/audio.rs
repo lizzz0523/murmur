@@ -1,5 +1,18 @@
 use std::f32::consts::{FRAC_1_SQRT_2, PI};
 
+pub fn downmix(samples: &[f32], channels: u16) -> Vec<f32> {
+    if channels < 2 {
+        samples.to_vec()
+    } else if channels == 2 {
+        samples
+            .chunks(2)
+            .map(|s| s.iter().sum::<f32>() / s.len() as f32)
+            .collect()
+    } else {
+        samples.chunks(channels as usize).map(|s| s[0]).collect()
+    }
+}
+
 pub fn resample_linear(samples: &[f32], sample_rate: u32, output_sample_rate: u32) -> Vec<f32> {
     if samples.is_empty() || sample_rate == output_sample_rate {
         return samples.to_vec();
