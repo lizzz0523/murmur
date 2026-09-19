@@ -238,7 +238,7 @@ impl RecognizerInner {
     async fn refine(&self, content: &str) -> anyhow::Result<String> {
         let messages = TextMessages::new()
             .enable_thinking(false)
-            .add_message(TextMessageRole::System, "将中文口语转写改写为正式、自然的书面语。保持原意，不添加原文没有的信息，只输出改写后的文本。")
+            .add_message(TextMessageRole::System, "将中文口语转写改写为正式、自然的书面语。保持原意，不添加原文没有的信息。可以纠正明显的同音字、近音字、专有名词和技术术语的识别错误；只在有把握时纠正，不确定则保留原文。只输出改写后的文本，不要任何解释。")
             .add_message(TextMessageRole::User, content);
 
         let response = self.refiner.send_chat_request(messages).await?;
