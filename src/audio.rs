@@ -31,9 +31,9 @@ pub fn resample_linear(samples: &[f32], sample_rate: u32, output_sample_rate: u3
     output
 }
 
-pub fn high_pass(samples: &[f32], sample_rate: u32, cutoff_hz: f32) -> Vec<f32> {
+pub fn high_pass(samples: &mut [f32], sample_rate: u32, cutoff_hz: f32) {
     if samples.is_empty() {
-        return vec![];
+        return;
     }
 
     let q = FRAC_1_SQRT_2;
@@ -59,21 +59,20 @@ pub fn high_pass(samples: &[f32], sample_rate: u32, cutoff_hz: f32) -> Vec<f32> 
     let mut y1 = 0.0;
     let mut y2 = 0.0;
 
-    let mut output = Vec::with_capacity(samples.len());
-    for &x in samples {
+    for s in samples.iter_mut() {
+        let x = *s;
         let y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
         x2 = x1;
         x1 = x;
         y2 = y1;
         y1 = y;
-        output.push(y);
+        *s = y;
     }
-    output
 }
 
-pub fn normalize(samples: &[f32], target_rms_dbfs: f32, max_gain_db: f32) -> Vec<f32> {
+pub fn normalize(samples: &mut [f32], target_rms_dbfs: f32, max_gain_db: f32) {
     if samples.is_empty() {
-        return vec![];
+        return;
     }
 
     let frame_len = (0.02 * 16_000.0) as usize;
@@ -91,7 +90,7 @@ pub fn normalize(samples: &[f32], target_rms_dbfs: f32, max_gain_db: f32) -> Vec
     }
 
     if frame_rms.is_empty() {
-        return samples.to_vec();
+        return;
     }
 
     frame_rms.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -99,14 +98,16 @@ pub fn normalize(samples: &[f32], target_rms_dbfs: f32, max_gain_db: f32) -> Vec
     let speech_rms = frame_rms[idx];
 
     if speech_rms < 1e-6 {
-        return samples.to_vec();
+        return;
     }
 
     let target = 10f32.powf(target_rms_dbfs / 20.0);
     let max_gain = 10f32.powf(max_gain_db / 20.0);
     let gain = (target / speech_rms).min(max_gain);
 
-    samples.iter().map(|s| s * gain).collect()
+    for s in samples.iter_mut() {
+        *s *= gain;
+    }
 }
 
 pub fn limit_peak(samples: &mut [f32], ceiling_dbfs: f32) {
