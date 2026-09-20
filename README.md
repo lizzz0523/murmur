@@ -14,7 +14,7 @@ macOS 上的本地语音输入工具：按住快捷键说话，松开后自动�
 
 ```
 录音 → 重采样到 16kHz → 高通滤波 → GTCRN 降噪 → 响度归一化 → 峰值限制
-    → Silero VAD 分段 → Qwen3-ASR 识别 → Qwen3-1.7B 润色
+    → Silero VAD 分段 → Qwen3-ASR 识别 → Qwen3-4B 润色
     → 粘贴
 ```
 
@@ -57,7 +57,7 @@ cargo build --release
 | 语音降噪 | `csukuangfj/speech-enhancement-models` |
 | 语音识别 | `csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25` |
 | 语音活动检测 | `csukuangfj/vad` |
-| 文本润色 | `unsloth/Qwen3-1.7B-GGUF` |
+| 文本润色 | `unsloth/Qwen3-4B-GGUF` |
 
 模型下载后由 `hf-hub` 缓存在本地。
 

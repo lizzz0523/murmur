@@ -192,15 +192,15 @@ impl RecognizerInner {
         };
 
         let refiner = {
-            let repos = client.model("unsloth", "Qwen3-1.7B-GGUF");
+            let repos = client.model("unsloth", "Qwen3-4B-GGUF");
             let downloaded = repos
                 .snapshot_download()
-                .allow_patterns(vec!["Qwen3-1.7B-Q4_K_M.gguf".to_string()])
+                .allow_patterns(vec!["Qwen3-4B-Q4_K_M.gguf".to_string()])
                 .max_workers(1)
-                .progress(PrintProgressHandler::new("qwen3-1.7b-gguf"))
+                .progress(PrintProgressHandler::new("qwen3-4b-gguf"))
                 .send()
                 .await?;
-            Refiner::create(&downloaded.join("Qwen3-1.7B-Q4_K_M.gguf"))?
+            Refiner::create(&downloaded.join("Qwen3-4B-Q4_K_M.gguf"))?
         };
 
         Ok(Self {
