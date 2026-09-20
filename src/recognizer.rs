@@ -201,7 +201,7 @@ impl RecognizerInner {
                 .progress(PrintProgressHandler::new("qwen3-1.7b-gguf"))
                 .send()
                 .await?;
-            Refiner::load(&downloaded.join("Qwen3-1.7B-Q4_K_M.gguf"))?
+            Refiner::create(&downloaded.join("Qwen3-1.7B-Q4_K_M.gguf"))?
         };
 
         Ok(Self {
@@ -213,11 +213,11 @@ impl RecognizerInner {
     }
 
     fn run(&self, samples: &[f32], sample_rate: u32) -> String {
-        let mut samples = audio::resample_linear(samples, sample_rate, TARGET_SAMPLE_RATE);
+        let mut samples = audio::resample(samples, sample_rate, TARGET_SAMPLE_RATE);
         audio::high_pass(&mut samples, TARGET_SAMPLE_RATE, HIGH_PASS_HZ);
-        audio::normalize(&mut samples, TARGET_RMS_DBFS, MAX_GAIN_DB);
 
         let mut samples = self.denoise(&samples);
+        audio::normalize(&mut samples, TARGET_RMS_DBFS, MAX_GAIN_DB);
         audio::limit_peak(&mut samples, PEAK_CEILING_DBFS);
 
         let segments = self.segments(&samples);

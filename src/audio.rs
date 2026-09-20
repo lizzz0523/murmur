@@ -1,5 +1,7 @@
 use std::f32::consts::{FRAC_1_SQRT_2, PI};
 
+use samplerate::{ConverterType, convert};
+
 pub fn downmix(samples: &[f32], channels: u16) -> Vec<f32> {
     if channels < 2 {
         samples.to_vec()
@@ -13,10 +15,20 @@ pub fn downmix(samples: &[f32], channels: u16) -> Vec<f32> {
     }
 }
 
-pub fn resample_linear(samples: &[f32], sample_rate: u32, output_sample_rate: u32) -> Vec<f32> {
-    if samples.is_empty() || sample_rate == output_sample_rate {
+pub fn resample(samples: &[f32], sample_rate: u32, output_sample_rate: u32) -> Vec<f32> {
+    if samples.is_empty() || sample_rate == 0 || sample_rate == output_sample_rate {
         return samples.to_vec();
     }
+    if let Ok(output) = convert(
+        sample_rate,
+        output_sample_rate,
+        1,
+        ConverterType::SincBestQuality,
+        samples,
+    ) {
+        return output;
+    }
+    // fallback linear
     let ratio = output_sample_rate as f64 / sample_rate as f64;
     let output_len = ((samples.len() as f64) * ratio).round() as usize;
     let mut output = Vec::with_capacity(output_len);

@@ -59,7 +59,7 @@ pub(crate) struct Refiner {
 }
 
 impl Refiner {
-    pub(crate) fn load(model_path: &Path) -> anyhow::Result<Self> {
+    pub(crate) fn create(model_path: &Path) -> anyhow::Result<Self> {
         send_logs_to_tracing(LogOptions::default().with_logs_enabled(false));
 
         let model = LlamaModel::load_from_file(

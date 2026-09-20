@@ -13,7 +13,7 @@ macOS 上的本地语音输入工具：按住快捷键说话，松开后自动�
 ## 处理流程
 
 ```
-录音 → 重采样到 16kHz → 高通滤波 → 响度归一化 → GTCRN 降噪 → 峰值限制
+录音 → 重采样到 16kHz → 高通滤波 → GTCRN 降噪 → 响度归一化 → 峰值限制
     → Silero VAD 分段 → Qwen3-ASR 识别 → Qwen3-1.7B 润色
     → 粘贴
 ```
@@ -23,7 +23,8 @@ macOS 上的本地语音输入工具：按住快捷键说话，松开后自动�
 - macOS
 - Rust 1.90 或更高（edition 2024）
 - 首次运行需要联网下载模型（之后缓存复用）
-- 从源码构建需要 `cmake` 与 `clang`（`llama-cpp-sys` 会用 cmake + bindgen 编译 llama.cpp）；若 bindgen 找不到 `libclang`，设置 `LIBCLANG_PATH` 指向包含 `libclang.dylib` 的目录。
+- 从源码构建需要 `cmake` 与 `clang`（`llama-cpp-sys` 会用 cmake + bindgen 编译 llama.cpp，`libsamplerate-sys` 也会用 cmake 编译 libsamplerate）；若 bindgen 找不到 `libclang`，设置 `LIBCLANG_PATH` 指向包含 `libclang.dylib` 的目录。
+- CMake 4 及以上版本已由仓库内 `.cargo/config.toml` 的 `CMAKE_POLICY_VERSION_MINIMUM=3.5` 自动处理，无需手动设置。
 
 ## 构建与运行
 
@@ -64,6 +65,7 @@ cargo build --release
 
 - [`eframe`](https://crates.io/crates/eframe) / `egui`：悬浮窗口与界面绘制
 - [`cpal`](https://crates.io/crates/cpal)：音频采集
+- [`samplerate`](https://crates.io/crates/samplerate)：高质量抗混叠重采样（libsamplerate 绑定）
 - [`sherpa-onnx`](https://crates.io/crates/sherpa-onnx)：降噪、VAD 与 ASR
 - [`llama-cpp-2`](https://crates.io/crates/llama-cpp-2)：文本润色（GGUF + Metal 加速）
 - [`handy-keys`](https://crates.io/crates/handy-keys) / [`enigo`](https://crates.io/crates/enigo)：全局快捷键与模拟输入
@@ -76,7 +78,7 @@ src/
 ├── main.rs        程序入口、窗口配置与图标
 ├── app.rs         应用状态机与界面绘制
 ├── recorder.rs    音频录制、设备枚举与切换
-├── audio.rs       重采样、高通滤波、归一化、峰值限制
+├── audio.rs       降混、重采样、高通滤波、归一化、峰值限制
 ├── recognizer.rs  降噪、VAD 分段、ASR 与模型下载
 ├── refiner.rs     Qwen3 文本润色（llama.cpp 推理）
 ├── hotkey.rs      全局快捷键监听
