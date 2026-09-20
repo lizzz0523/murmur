@@ -77,6 +77,10 @@ impl Refiner {
     }
 
     pub(crate) fn refine(&self, content: &str) -> anyhow::Result<String> {
+        if content.trim().is_empty() {
+            bail!("refiner received empty content");
+        }
+
         let messages = [
             LlamaChatMessage::new("system".to_string(), SYSTEM_PROMPT.to_string())?,
             LlamaChatMessage::new("user".to_string(), format!("{content}\n/no_think"))?,

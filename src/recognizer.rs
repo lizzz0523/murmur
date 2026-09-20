@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::iter;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::{Mutex, mpsc};
@@ -217,11 +216,18 @@ impl RecognizerInner {
         audio::high_pass(&mut samples, TARGET_SAMPLE_RATE, HIGH_PASS_HZ);
 
         let mut samples = self.denoise(&samples);
+        let segments = self.segments(&samples);
+        if segments.is_empty() {
+            return String::new();
+        }
+
         audio::normalize(&mut samples, TARGET_RMS_DBFS, MAX_GAIN_DB);
         audio::limit_peak(&mut samples, PEAK_CEILING_DBFS);
 
-        let segments = self.segments(&samples);
         let content = self.recognize(&samples, &segments);
+        if content.trim().is_empty() {
+            return String::new();
+        }
 
         self.refiner.refine(&content).unwrap_or(content)
     }
@@ -266,7 +272,7 @@ impl RecognizerInner {
         collect_segments();
 
         if detected.is_empty() {
-            return iter::once(0..samples.len()).collect();
+            return Vec::new();
         }
 
         let margin = (SEGMENT_MARGIN_SECONDS * TARGET_SAMPLE_RATE as f32) as usize;
@@ -300,7 +306,7 @@ impl RecognizerInner {
 
     fn denoise(&self, samples: &[f32]) -> Vec<f32> {
         if samples.is_empty() {
-            return vec![];
+            return Vec::new();
         }
         let result = self.denoiser.run(samples, TARGET_SAMPLE_RATE as i32);
         if result.samples.is_empty() {

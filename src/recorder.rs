@@ -38,7 +38,7 @@ impl Recorder {
             host,
             tx,
             rx,
-            samples: vec![],
+            samples: Vec::new(),
             sample_rate,
             smooth_rms: 0.0,
             stream,

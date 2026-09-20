@@ -70,7 +70,9 @@ impl App {
         if !matches!(self.state, State::Recognizing) {
             return;
         }
-        let _ = self.enigo.text(text);
+        if !text.trim().is_empty() {
+            let _ = self.enigo.text(text);
+        }
         self.state = State::Ready;
     }
 
