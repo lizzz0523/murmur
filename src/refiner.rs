@@ -262,18 +262,13 @@ fn split_windows(content: &str) -> Vec<String> {
     windows
 }
 
-fn is_boundary(ch: char, next: Option<&char>) -> bool {
-    matches!(ch, '。' | '！' | '？' | '!' | '?' | '；' | ';' | '\n')
-        || (ch == '.' && next.is_none_or(|next| next.is_whitespace()))
-}
-
-fn split_sentences(text: &str) -> Vec<String> {
+fn split_sentences(content: &str) -> Vec<String> {
     const HARD_LIMIT: usize = 800;
 
     let mut sentences = Vec::new();
     let mut current = String::new();
     let mut count = 0usize;
-    let mut chars = text.chars().peekable();
+    let mut chars = content.chars().peekable();
 
     while let Some(ch) = chars.next() {
         current.push(ch);
@@ -316,6 +311,11 @@ fn split_half(content: &str) -> Option<(String, String)> {
         return None;
     }
     Some((left, right))
+}
+
+fn is_boundary(ch: char, next: Option<&char>) -> bool {
+    matches!(ch, '。' | '！' | '？' | '!' | '?' | '；' | ';' | '\n')
+        || (ch == '.' && next.is_none_or(|next| next.is_whitespace()))
 }
 
 fn tail_of(text: &str, max_chars: usize) -> String {
