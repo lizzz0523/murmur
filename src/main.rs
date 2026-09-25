@@ -6,6 +6,7 @@ use app::{App, get_window_size};
 mod audio;
 mod hotkey;
 mod hub;
+mod pipeline;
 mod recognizer;
 mod recorder;
 mod refiner;

@@ -4,12 +4,11 @@ use eframe::egui;
 use enigo::{Enigo, Keyboard};
 
 use crate::hotkey::Hotkey;
-use crate::recognizer::{ReadyHook, Recognizer};
-use crate::recorder::Recorder;
+use crate::pipeline::{Pipeline, PipelineEvent};
 use crate::tray::{Tray, TrayAction};
 
 enum State {
-    Loading(ReadyHook),
+    Loading,
     Ready,
     Recording,
     Recognizing,
@@ -19,93 +18,62 @@ enum State {
 pub struct App {
     tray: Tray,
     hotkey: Hotkey,
-    recorder: Recorder,
-    recognizer: Recognizer,
+    pipeline: Pipeline,
     state: State,
     enigo: Enigo,
 }
 
 impl App {
     pub fn new(ctx: &egui::Context) -> Self {
-        let (recognizer, ready_hook) = Recognizer::load().unwrap();
-        let recorder = Recorder::new().unwrap();
+        let pipeline = Pipeline::new().unwrap();
         let tray = Tray::new(ctx).unwrap();
         let hotkey = Hotkey::new(ctx).unwrap();
 
-        tray.set_devices(&recorder.list_devices(), recorder.current_device());
+        tray.set_devices(&pipeline.list_devices(), pipeline.current_device());
 
         Self {
             tray,
             hotkey,
-            recorder,
-            recognizer,
-            state: State::Loading(ready_hook),
+            pipeline,
+            state: State::Loading,
             enigo: Enigo::new(&enigo::Settings::default()).unwrap(),
         }
     }
 
-    fn start_record(&mut self) {
-        if !matches!(self.state, State::Ready) {
-            return;
-        }
-        self.recognizer.begin();
-        self.recorder.start().unwrap();
-        self.state = State::Recording;
-    }
-
-    fn stop_record(&mut self) {
-        if !matches!(self.state, State::Recording) {
-            return;
-        }
-        let samples = self.recorder.stop().unwrap();
-        let sample_rate = self.recorder.sample_rate();
-        if !samples.is_empty() {
-            self.recognizer.push(samples, sample_rate);
-        }
-        self.recognizer.end();
-        self.state = State::Recognizing;
-    }
-
-    fn paste_text(&mut self, text: &str) {
-        if !text.trim().is_empty() {
-            let _ = self.enigo.text(text);
-        }
-        self.state = State::Ready;
-    }
-
     fn handle_state(&mut self, ctx: &egui::Context) {
-        let samples = self.recorder.poll();
-
-        match &self.state {
-            State::Loading(ready_hook) => match ready_hook.poll() {
-                Ok(ready) => {
-                    if ready {
-                        self.state = State::Ready
+        for event in self.pipeline.poll() {
+            match event {
+                PipelineEvent::Ready => self.state = State::Ready,
+                PipelineEvent::Recognized(text) => {
+                    if !text.trim().is_empty() {
+                        let _ = self.enigo.text(&text);
                     }
+                    self.state = State::Ready;
                 }
-                Err(_) => self.state = State::Failed,
-            },
+                PipelineEvent::Failed(err) => {
+                    eprintln!("pipeline failed: {err:#}");
+                    self.state = State::Failed;
+                }
+            }
+        }
+
+        match self.state {
             State::Ready => {
                 if self.hotkey.is_pressed() {
-                    self.start_record();
+                    self.pipeline.start();
+                    self.state = State::Recording;
                 }
             }
             State::Recording => {
-                if !samples.is_empty() {
-                    self.recognizer.push(samples, self.recorder.sample_rate());
-                }
                 if !self.hotkey.is_pressed() {
-                    self.stop_record();
+                    self.pipeline.stop();
+                    self.state = State::Recognizing;
                 }
             }
-            State::Recognizing | State::Failed => {}
+            State::Loading | State::Recognizing | State::Failed => {}
         }
 
-        while let Some(text) = self.recognizer.poll() {
-            self.paste_text(&text);
-        }
-
-        if matches!(self.state, State::Recognizing | State::Recording) {
+        if matches!(self.state, State::Recording | State::Recognizing) {
             ctx.request_repaint_after(Duration::from_millis(33));
         }
     }
@@ -115,15 +83,15 @@ impl App {
             match action {
                 TrayAction::SelectDevice(id) => {
                     if !matches!(self.state, State::Recording | State::Recognizing)
-                        && self.recorder.select_device(&id).is_ok()
+                        && self.pipeline.select_device(&id).is_ok()
                     {
                         self.tray.set_selected_device(&id);
                     }
                 }
                 TrayAction::RefreshDevices => {
                     self.tray.set_devices(
-                        &self.recorder.list_devices(),
-                        self.recorder.current_device(),
+                        &self.pipeline.list_devices(),
+                        self.pipeline.current_device(),
                     );
                 }
                 TrayAction::Quit => {
@@ -147,7 +115,7 @@ impl App {
             );
 
             match &self.state {
-                State::Loading(_) => self.draw_loading(ui),
+                State::Loading => self.draw_loading(ui),
                 State::Failed => self.draw_text(ui, "Error"),
                 State::Ready => self.draw_text(ui, "Murmur"),
                 State::Recording => self.draw_recording(ui),
@@ -218,7 +186,7 @@ impl App {
         let start_x = rect.center().x - total_w / 2.0;
         let center_y = rect.center().y;
 
-        let dbfs = self.recorder.dbfs();
+        let dbfs = self.pipeline.dbfs();
         let level = ((60.0 + dbfs) / 60.0).clamp(0.0, 1.0);
 
         for (i, weight) in WEIGHTS.iter().enumerate() {
