@@ -25,9 +25,9 @@ pub struct App {
 
 impl App {
     pub fn new(ctx: &egui::Context) -> Self {
-        let pipeline = Pipeline::new().unwrap();
         let tray = Tray::new(ctx).unwrap();
         let hotkey = Hotkey::new(ctx).unwrap();
+        let pipeline = Pipeline::new().unwrap();
 
         tray.set_devices(&pipeline.list_devices(), pipeline.current_device());
 
@@ -40,7 +40,7 @@ impl App {
         }
     }
 
-    fn handle_state(&mut self, ctx: &egui::Context) {
+    fn handle_event(&mut self, ctx: &egui::Context) {
         for event in self.pipeline.poll() {
             match event {
                 PipelineEvent::Ready => self.state = State::Ready,
@@ -211,7 +211,7 @@ impl eframe::App for App {
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_tray(ctx);
-        self.handle_state(ctx);
+        self.handle_event(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
