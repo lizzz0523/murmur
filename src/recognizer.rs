@@ -9,7 +9,6 @@ use sherpa_onnx::{
     OfflineSpeechDenoiser, OfflineSpeechDenoiserConfig, OfflineSpeechDenoiserGtcrnModelConfig,
     OfflineSpeechDenoiserModelConfig, SileroVadModelConfig, VadModelConfig, VoiceActivityDetector,
 };
-use tokio::sync::mpsc as tokio_mpsc;
 
 use crate::audio::{self, HighPass};
 use crate::hub;
@@ -35,7 +34,7 @@ enum RecognizerCall {
 }
 
 pub struct Recognizer {
-    tx: tokio_mpsc::UnboundedSender<RecognizerCall>,
+    tx: mpsc::Sender<RecognizerCall>,
     rx: mpsc::Receiver<String>,
     _rt: tokio::runtime::Runtime,
 }
@@ -43,7 +42,7 @@ pub struct Recognizer {
 impl Recognizer {
     pub fn load() -> anyhow::Result<(Self, ReadyHook)> {
         let rt = tokio::runtime::Runtime::new()?;
-        let (tx, mut rx_spawn) = tokio_mpsc::unbounded_channel();
+        let (tx, rx_spawn) = mpsc::channel();
         let (tx_spawn, rx) = mpsc::channel();
         let (tx_ready, rx_ready) = mpsc::channel();
 
@@ -68,7 +67,7 @@ impl Recognizer {
                 };
                 let _ = tx_ready.send(Ok(()));
 
-                while let Some(call) = rx_spawn.blocking_recv() {
+                while let Ok(call) = rx_spawn.recv() {
                     match call {
                         RecognizerCall::Begin => {
                             inner.begin();
