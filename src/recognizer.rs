@@ -113,6 +113,10 @@ impl Recognizer {
     pub fn poll(&self) -> Option<String> {
         self.rx.try_recv().ok()
     }
+
+    pub fn recv(&self) -> Option<String> {
+        self.rx.recv().ok()
+    }
 }
 
 const TARGET_SAMPLE_RATE: u32 = 16_000;
