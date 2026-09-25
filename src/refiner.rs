@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::LazyLock;
@@ -64,8 +65,10 @@ static LLAMA_BACKEND: LazyLock<LlamaBackend> =
     LazyLock::new(|| LlamaBackend::init().expect("failed to init llama backend"));
 
 pub(crate) struct Refiner {
-    model: LlamaModel,
+    model: &'static LlamaModel,
     template: LlamaChatTemplate,
+    system_tokens: Vec<LlamaToken>,
+    context: RefCell<LlamaContext<'static>>,
 }
 
 impl Refiner {
@@ -83,7 +86,27 @@ impl Refiner {
             .chat_template(None)
             .context("refiner model has no chat template")?;
 
-        Ok(Self { model, template })
+        let system = LlamaChatMessage::new("system".to_string(), SYSTEM_PROMPT.to_string())?;
+        let system_prompt = model.apply_chat_template(&template, &[system], false)?;
+        let system_tokens = model.str_to_token(&system_prompt, AddBos::Always)?;
+
+        let model: &'static LlamaModel = Box::leak(Box::new(model));
+
+        let mut context = model.new_context(
+            &LLAMA_BACKEND,
+            LlamaContextParams::default().with_n_ctx(NonZeroU32::new(CONTEXT_SIZE)),
+        )?;
+
+        let mut batch = LlamaBatch::new(system_tokens.len().max(1), 1);
+        batch.add_sequence(&system_tokens, 0, false)?;
+        context.decode(&mut batch)?;
+
+        Ok(Self {
+            model,
+            template,
+            system_tokens,
+            context: RefCell::new(context),
+        })
     }
 
     pub(crate) fn refine(&self, content: &str) -> anyhow::Result<String> {
@@ -91,10 +114,7 @@ impl Refiner {
             bail!("refiner received empty content");
         }
 
-        let mut context = self.model.new_context(
-            &LLAMA_BACKEND,
-            LlamaContextParams::default().with_n_ctx(NonZeroU32::new(CONTEXT_SIZE)),
-        )?;
+        let mut context = self.context.borrow_mut();
 
         let windows = split_windows(content);
         let mut output = String::new();
@@ -178,10 +198,22 @@ impl Refiner {
         tokens: &[LlamaToken],
         output_token_budget: usize,
     ) -> anyhow::Result<String> {
-        context.clear_kv_cache();
+        // 保留 [0, prefill) 的 system 前缀 KV，只清掉其后并续算可变部分。
+        let prefill = common_prefix_len(tokens, &self.system_tokens);
+        if prefill > 0 {
+            let _ = context.clear_kv_cache_seq(Some(0), Some(prefill as u32), None);
+        } else {
+            context.clear_kv_cache();
+        }
 
-        let mut batch = LlamaBatch::new(tokens.len().max(1), 1);
-        batch.add_sequence(tokens, 0, false)?;
+        let suffix = &tokens[prefill..];
+        let mut batch = LlamaBatch::new(suffix.len().max(1), 1);
+
+        let last = tokens.len().saturating_sub(1);
+        for (i, token) in suffix.iter().enumerate() {
+            let pos = (prefill + i) as i32;
+            batch.add(*token, pos, &[0], prefill + i == last)?;
+        }
         context.decode(&mut batch)?;
 
         let mut sampler = LlamaSampler::greedy();
@@ -301,4 +333,8 @@ fn strip_reasoning(text: &str) -> &str {
         Some(idx) => &text[idx + "</think>".len()..],
         None => text,
     }
+}
+
+fn common_prefix_len(a: &[LlamaToken], b: &[LlamaToken]) -> usize {
+    a.iter().zip(b).take_while(|(x, y)| x == y).count()
 }
