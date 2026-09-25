@@ -1,12 +1,8 @@
-use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;
-use std::sync::{Mutex, mpsc};
+use std::sync::mpsc;
 
 use anyhow::{Context, anyhow};
-use hf_hub::HFClient;
-use hf_hub::progress::{DownloadEvent, ProgressEvent, ProgressHandler};
-use indicatif::{ProgressBar, ProgressStyle};
 use sherpa_onnx::{
     OfflineModelConfig, OfflineQwen3ASRModelConfig, OfflineRecognizer, OfflineRecognizerConfig,
     OfflineSpeechDenoiser, OfflineSpeechDenoiserConfig, OfflineSpeechDenoiserGtcrnModelConfig,
@@ -15,6 +11,7 @@ use sherpa_onnx::{
 use tokio::sync::mpsc as tokio_mpsc;
 
 use crate::audio;
+use crate::hub;
 use crate::refiner::Refiner;
 
 pub struct ReadyHook(mpsc::Receiver<anyhow::Result<()>>);
@@ -106,21 +103,13 @@ struct RecognizerInner {
 
 impl RecognizerInner {
     async fn async_load() -> anyhow::Result<Self> {
-        let client = HFClient::new()?;
+        let model = hub::resolve_model().await?;
 
         let denoiser = {
-            let repos = client.model("csukuangfj", "speech-enhancement-models");
-            let downloaded = repos
-                .snapshot_download()
-                .allow_patterns(vec!["gtcrn_simple.onnx".to_string()])
-                .max_workers(1)
-                .progress(PrintProgressHandler::new("gtcrn"))
-                .send()
-                .await?;
             let config = OfflineSpeechDenoiserConfig {
                 model: OfflineSpeechDenoiserModelConfig {
                     gtcrn: OfflineSpeechDenoiserGtcrnModelConfig {
-                        model: Some(path_string(&downloaded.join("gtcrn_simple.onnx"))),
+                        model: Some(path_string(&model.denoiser)),
                     },
                     num_threads: 1,
                     provider: Some("cpu".to_string()),
@@ -132,26 +121,13 @@ impl RecognizerInner {
         };
 
         let asr = {
-            let repos = client.model("csukuangfj2", "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25");
-            let downloaded = repos
-                .snapshot_download()
-                .allow_patterns(vec![
-                    "conv_frontend.onnx".to_string(),
-                    "encoder.int8.onnx".to_string(),
-                    "decoder.int8.onnx".to_string(),
-                    "tokenizer/*".to_string(),
-                ])
-                .max_workers(3)
-                .progress(PrintProgressHandler::new("qwen3-asr-0.6B"))
-                .send()
-                .await?;
             let config = OfflineRecognizerConfig {
                 model_config: OfflineModelConfig {
                     qwen3_asr: OfflineQwen3ASRModelConfig {
-                        conv_frontend: Some(path_string(&downloaded.join("conv_frontend.onnx"))),
-                        encoder: Some(path_string(&downloaded.join("encoder.int8.onnx"))),
-                        decoder: Some(path_string(&downloaded.join("decoder.int8.onnx"))),
-                        tokenizer: Some(path_string(&downloaded.join("tokenizer"))),
+                        conv_frontend: Some(path_string(&model.asr_conv_frontend)),
+                        encoder: Some(path_string(&model.asr_encoder)),
+                        decoder: Some(path_string(&model.asr_decoder)),
+                        tokenizer: Some(path_string(&model.asr_tokenizer)),
                         max_new_tokens: 512,
                         ..Default::default()
                     },
@@ -165,17 +141,9 @@ impl RecognizerInner {
         };
 
         let vad = {
-            let repos = client.model("csukuangfj", "vad");
-            let downloaded = repos
-                .snapshot_download()
-                .allow_patterns(vec!["silero_vad_v5.onnx".to_string()])
-                .max_workers(3)
-                .progress(PrintProgressHandler::new("silero-vad-v5"))
-                .send()
-                .await?;
             let config = VadModelConfig {
                 silero_vad: SileroVadModelConfig {
-                    model: Some(path_string(&downloaded.join("silero_vad_v5.onnx"))),
+                    model: Some(path_string(&model.vad)),
                     threshold: 0.5,
                     min_silence_duration: 0.25,
                     min_speech_duration: 0.25,
@@ -191,17 +159,7 @@ impl RecognizerInner {
             vad.with_context(|| "failed to create recognizer")?
         };
 
-        let refiner = {
-            let repos = client.model("unsloth", "Qwen3-4B-GGUF");
-            let downloaded = repos
-                .snapshot_download()
-                .allow_patterns(vec!["Qwen3-4B-Q4_K_M.gguf".to_string()])
-                .max_workers(1)
-                .progress(PrintProgressHandler::new("qwen3-4b-gguf"))
-                .send()
-                .await?;
-            Refiner::create(&downloaded.join("Qwen3-4B-Q4_K_M.gguf"))?
-        };
+        let refiner = Refiner::create(&model.refiner)?;
 
         Ok(Self {
             denoiser,
@@ -242,7 +200,7 @@ impl RecognizerInner {
 
             let text = stream
                 .get_result()
-                .map(|result| result.text.trim().to_string())
+                .map(|result| strip_control_prefix(result.text.trim()))
                 .unwrap_or_default();
             if !text.is_empty() {
                 parts.push(text);
@@ -317,80 +275,11 @@ impl RecognizerInner {
     }
 }
 
-struct PrintProgressHandler {
-    bar: ProgressBar,
-    files: Mutex<HashMap<String, u64>>,
-}
-
-impl PrintProgressHandler {
-    fn new(model: &'static str) -> Self {
-        const BAR_WIDTH: usize = 24;
-        const LABEL_WIDTH: usize = 22;
-
-        let bar = ProgressBar::new(0);
-        bar.set_style(
-            ProgressStyle::with_template(&format!(
-                "{{spinner:.green}} {{prefix:<{LABEL_WIDTH}}} [{{bar:{BAR_WIDTH}.cyan/blue}}] {{bytes}}/{{total_bytes}}"
-            ))
-            .expect("invalid progress template")
-            .progress_chars("=> "),
-        );
-        bar.set_prefix(model);
-
-        Self {
-            bar,
-            files: Mutex::new(HashMap::new()),
-        }
-    }
-
-    fn set_position(&self, position: u64) {
-        if position > self.bar.position() {
-            self.bar.set_position(position);
-        }
-    }
-
-    fn set_length(&self, length: u64) {
-        if self.bar.length().is_none_or(|current| length > current) {
-            self.bar.set_length(length);
-        }
-    }
-}
-
-impl ProgressHandler for PrintProgressHandler {
-    fn on_progress(&self, event: &ProgressEvent) {
-        let ProgressEvent::Download(event) = event else {
-            return;
-        };
-
-        match event {
-            DownloadEvent::Start { total_bytes, .. } => {
-                self.files
-                    .lock()
-                    .unwrap_or_else(|err| err.into_inner())
-                    .clear();
-                self.set_length(*total_bytes);
-            }
-            DownloadEvent::Progress { files } => {
-                let sum = {
-                    let mut tracked = self.files.lock().unwrap_or_else(|err| err.into_inner());
-                    for file in files {
-                        let entry = tracked.entry(file.filename.clone()).or_insert(0);
-                        *entry = (*entry).max(file.bytes_completed);
-                    }
-                    tracked.values().copied().sum()
-                };
-                self.set_position(sum);
-            }
-            DownloadEvent::AggregateProgress {
-                bytes_completed,
-                total_bytes,
-                ..
-            } => {
-                self.set_length(*total_bytes);
-                self.set_position(*bytes_completed);
-            }
-            DownloadEvent::Complete => self.bar.finish(),
-        }
+fn strip_control_prefix(text: &str) -> String {
+    const MARK: &str = "<asr_text>";
+    match text.rfind(MARK) {
+        Some(idx) => text[idx + MARK.len()..].trim().to_string(),
+        None => text.to_string(),
     }
 }
 

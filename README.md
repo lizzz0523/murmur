@@ -55,7 +55,7 @@ cargo build --release
 | 用途 | 模型仓库 |
 | --- | --- |
 | 语音降噪 | `csukuangfj/speech-enhancement-models` |
-| 语音识别 | `csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25` |
+| 语音识别 | `solavr/sherpa-onnx-qwen3-asr-1.7B-int8` |
 | 语音活动检测 | `csukuangfj/vad` |
 | 文本润色 | `unsloth/Qwen3-4B-GGUF` |
 
@@ -75,13 +75,14 @@ cargo build --release
 
 ```
 src/
-├── main.rs        程序入口、窗口配置与图标
 ├── app.rs         应用状态机与界面绘制
-├── recorder.rs    音频录制、设备枚举与切换
 ├── audio.rs       降混、重采样、高通滤波、归一化、峰值限制
-├── recognizer.rs  降噪、VAD 分段、ASR 与模型下载
-├── refiner.rs     Qwen3 文本润色（llama.cpp 推理）
 ├── hotkey.rs      全局快捷键监听
+├── hub.rs         模型下载与进度（resolve_model）
+├── main.rs        程序入口、窗口配置与图标
+├── recognizer.rs  降噪、VAD 分段与 ASR
+├── recorder.rs    音频录制、设备枚举与切换
+├── refiner.rs     Qwen3 文本润色（llama.cpp 推理）
 └── tray.rs        菜单栏图标与菜单
 assets/            应用图标与托盘模板图标
 ```
