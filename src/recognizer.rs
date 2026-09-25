@@ -181,9 +181,9 @@ impl RecognizerInner {
                 silero_vad: SileroVadModelConfig {
                     model: Some(path_string(&model.vad)),
                     threshold: 0.5,
-                    min_silence_duration: 0.25,
+                    min_silence_duration: 0.45,
                     min_speech_duration: 0.25,
-                    max_speech_duration: 5.0,
+                    max_speech_duration: 10.0,
                     ..Default::default()
                 },
                 sample_rate: TARGET_SAMPLE_RATE as i32,
