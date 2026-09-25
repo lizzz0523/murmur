@@ -76,10 +76,10 @@ impl Pipeline {
         }
         self.active = false;
 
-        if let Ok(samples) = self.recorder.stop() {
-            if !samples.is_empty() {
-                self.recognizer.push(samples, self.recorder.sample_rate());
-            }
+        if let Ok(samples) = self.recorder.stop()
+            && !samples.is_empty()
+        {
+            self.recognizer.push(samples, self.recorder.sample_rate());
         }
         self.recognizer.end();
     }
