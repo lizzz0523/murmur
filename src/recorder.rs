@@ -15,7 +15,6 @@ pub struct Recorder {
     host: cpal::Host,
     tx: mpsc::Sender<Vec<f32>>,
     rx: mpsc::Receiver<Vec<f32>>,
-    samples: Vec<f32>,
     sample_rate: u32,
     smooth_rms: f32,
     stream: cpal::Stream,
@@ -38,7 +37,6 @@ impl Recorder {
             host,
             tx,
             rx,
-            samples: Vec::new(),
             sample_rate,
             smooth_rms: 0.0,
             stream,
@@ -62,7 +60,7 @@ impl Recorder {
                         let id = device.id().ok();
                         InputDevice {
                             name: device.to_string(),
-                            is_default: id.as_ref() == default_id.as_ref(),
+                            is_default: id == default_id,
                             id: id.map(|id| id.to_string()).unwrap_or_default(),
                         }
                     })
@@ -84,7 +82,6 @@ impl Recorder {
         self.stream = stream;
         self.sample_rate = sample_rate;
         self.device_id = id.to_string();
-        self.samples.clear();
         self.smooth_rms = 0.0;
         while self.rx.try_recv().is_ok() {}
 
@@ -99,28 +96,30 @@ impl Recorder {
 
     pub fn stop(&mut self) -> anyhow::Result<Vec<f32>> {
         self.stream.pause()?;
-        while let Ok(samples) = self.rx.try_recv() {
-            self.samples.extend_from_slice(&samples[..]);
+        let mut samples = Vec::new();
+        while let Ok(mut chunk) = self.rx.try_recv() {
+            samples.append(&mut chunk);
         }
-        Ok(self.samples.drain(..).collect())
+        Ok(samples)
     }
 
-    pub fn poll(&mut self) {
-        let mut last_samples = None;
-        while let Ok(samples) = self.rx.try_recv() {
-            self.samples.extend_from_slice(&samples[..]);
-            last_samples = Some(samples);
+    pub fn poll(&mut self) -> Vec<f32> {
+        let mut samples = Vec::new();
+        while let Ok(mut chunk) = self.rx.try_recv() {
+            samples.append(&mut chunk);
         }
 
-        let rms = if let Some(samples) = last_samples {
+        let rms = if samples.is_empty() {
+            0.0
+        } else {
             let sum_sq = samples.iter().map(|s| s * s).sum::<f32>();
             (sum_sq / samples.len() as f32).sqrt()
-        } else {
-            0.0
         };
 
         let alpha = 0.9;
         self.smooth_rms = alpha * rms + (1.0 - alpha) * self.smooth_rms;
+
+        samples
     }
 
     pub fn dbfs(&mut self) -> f32 {

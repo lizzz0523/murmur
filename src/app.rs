@@ -48,6 +48,7 @@ impl App {
         if !matches!(self.state, State::Ready) {
             return;
         }
+        self.recognizer.begin();
         self.recorder.start().unwrap();
         self.state = State::Recording;
     }
@@ -59,17 +60,13 @@ impl App {
         let samples = self.recorder.stop().unwrap();
         let sample_rate = self.recorder.sample_rate();
         if !samples.is_empty() {
-            self.recognizer.run(samples, sample_rate);
-            self.state = State::Recognizing;
-        } else {
-            self.state = State::Ready;
+            self.recognizer.push(samples, sample_rate);
         }
+        self.recognizer.end();
+        self.state = State::Recognizing;
     }
 
     fn paste_text(&mut self, text: &str) {
-        if !matches!(self.state, State::Recognizing) {
-            return;
-        }
         if !text.trim().is_empty() {
             let _ = self.enigo.text(text);
         }
@@ -77,7 +74,7 @@ impl App {
     }
 
     fn handle_state(&mut self, ctx: &egui::Context) {
-        self.recorder.poll();
+        let samples = self.recorder.poll();
 
         match &self.state {
             State::Loading(ready_hook) => match ready_hook.poll() {
@@ -94,17 +91,20 @@ impl App {
                 }
             }
             State::Recording => {
+                if !samples.is_empty() {
+                    self.recognizer.push(samples, self.recorder.sample_rate());
+                }
                 if !self.hotkey.is_pressed() {
                     self.stop_record();
                 }
             }
-            State::Recognizing => {
-                if let Some(text) = self.recognizer.poll() {
-                    self.paste_text(&text);
-                }
-            }
-            _ => {}
+            State::Recognizing | State::Failed => {}
         }
+
+        while let Some(text) = self.recognizer.poll() {
+            self.paste_text(&text);
+        }
+
         if matches!(self.state, State::Recognizing | State::Recording) {
             ctx.request_repaint_after(Duration::from_millis(33));
         }

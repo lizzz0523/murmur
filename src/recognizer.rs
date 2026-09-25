@@ -1,8 +1,9 @@
-use std::ops::Range;
+use std::mem;
 use std::path::Path;
 use std::sync::mpsc;
 
 use anyhow::{Context, anyhow};
+use samplerate::{ConverterType, Samplerate};
 use sherpa_onnx::{
     OfflineModelConfig, OfflineQwen3ASRModelConfig, OfflineRecognizer, OfflineRecognizerConfig,
     OfflineSpeechDenoiser, OfflineSpeechDenoiserConfig, OfflineSpeechDenoiserGtcrnModelConfig,
@@ -10,7 +11,7 @@ use sherpa_onnx::{
 };
 use tokio::sync::mpsc as tokio_mpsc;
 
-use crate::audio;
+use crate::audio::{self, HighPass};
 use crate::hub;
 use crate::refiner::Refiner;
 
@@ -28,7 +29,9 @@ impl ReadyHook {
 }
 
 enum RecognizerCall {
-    Run { samples: Vec<f32>, sample_rate: u32 },
+    Begin,
+    Push { samples: Vec<f32>, sample_rate: u32 },
+    End,
 }
 
 pub struct Recognizer {
@@ -45,37 +48,67 @@ impl Recognizer {
         let (tx_ready, rx_ready) = mpsc::channel();
 
         rt.spawn(async move {
-            let inner = match RecognizerInner::async_load().await {
-                Ok(inner) => inner,
+            let model = match hub::resolve_model().await {
+                Ok(model) => model,
                 Err(err) => {
-                    eprintln!("recognizer load failed: {err:#}");
+                    eprintln!("model load failed: {err:#}");
                     let _ = tx_ready.send(Err(err));
                     return;
                 }
             };
-            let _ = tx_ready.send(Ok(()));
 
-            while let Some(call) = rx_spawn.recv().await {
-                match call {
-                    RecognizerCall::Run {
-                        samples,
-                        sample_rate,
-                    } => {
-                        let result = inner.run(&samples, sample_rate);
-                        let _ = tx_spawn.send(result);
+            let result = tokio::task::spawn_blocking(move || {
+                let mut inner = match RecognizerInner::new(model) {
+                    Ok(inner) => inner,
+                    Err(err) => {
+                        eprintln!("recognizer load failed: {err:#}");
+                        let _ = tx_ready.send(Err(err));
+                        return;
+                    }
+                };
+                let _ = tx_ready.send(Ok(()));
+
+                while let Some(call) = rx_spawn.blocking_recv() {
+                    match call {
+                        RecognizerCall::Begin => {
+                            inner.begin();
+                        }
+                        RecognizerCall::Push {
+                            samples,
+                            sample_rate,
+                        } => {
+                            inner.push(&samples, sample_rate);
+                        }
+                        RecognizerCall::End => {
+                            let text = inner.end();
+                            let _ = tx_spawn.send(text);
+                        }
                     }
                 }
+            })
+            .await;
+
+            if let Err(err) = result {
+                eprintln!("recognizer task failed: {err}");
             }
         });
 
         Ok((Self { _rt: rt, tx, rx }, ReadyHook(rx_ready)))
     }
 
-    pub fn run(&self, samples: Vec<f32>, sample_rate: u32) {
-        let _ = self.tx.send(RecognizerCall::Run {
+    pub fn begin(&self) {
+        let _ = self.tx.send(RecognizerCall::Begin);
+    }
+
+    pub fn push(&self, samples: Vec<f32>, sample_rate: u32) {
+        let _ = self.tx.send(RecognizerCall::Push {
             samples,
             sample_rate,
         });
+    }
+
+    pub fn end(&self) {
+        let _ = self.tx.send(RecognizerCall::End);
     }
 
     pub fn poll(&self) -> Option<String> {
@@ -84,27 +117,31 @@ impl Recognizer {
 }
 
 const TARGET_SAMPLE_RATE: u32 = 16_000;
+const VAD_CHUNK: usize = 512;
 
 const HIGH_PASS_HZ: f32 = 100.0;
 const TARGET_RMS_DBFS: f32 = -20.0;
 const MAX_GAIN_DB: f32 = 26.0;
 const PEAK_CEILING_DBFS: f32 = -1.0;
 
-const SEGMENT_MARGIN_SECONDS: f32 = 0.8;
-const MERGE_GAP_SECONDS: f32 = 0.6;
-const MAX_CHUNK_SECONDS: f32 = 20.0;
+const SEGMENT_TAIL_MARGIN_SECONDS: f32 = 0.15;
 
 struct RecognizerInner {
     denoiser: OfflineSpeechDenoiser,
     asr: OfflineRecognizer,
     vad: VoiceActivityDetector,
+    vad_cursor: usize,
     refiner: Refiner,
+    resampler: Option<Samplerate>,
+    high_pass: HighPass,
+    transcript: String,
+    samples: Vec<f32>,
+    sample_rate: u32,
+    process_end: usize,
 }
 
 impl RecognizerInner {
-    async fn async_load() -> anyhow::Result<Self> {
-        let model = hub::resolve_model().await?;
-
+    fn new(model: hub::Model) -> anyhow::Result<Self> {
         let denoiser = {
             let config = OfflineSpeechDenoiserConfig {
                 model: OfflineSpeechDenoiserModelConfig {
@@ -165,107 +202,153 @@ impl RecognizerInner {
             denoiser,
             asr,
             vad,
+            vad_cursor: 0,
             refiner,
+            resampler: None,
+            high_pass: HighPass::new(TARGET_SAMPLE_RATE, HIGH_PASS_HZ),
+            transcript: String::new(),
+            samples: Vec::new(),
+            sample_rate: 0,
+            process_end: 0,
         })
     }
 
-    fn run(&self, samples: &[f32], sample_rate: u32) -> String {
-        let mut samples = audio::resample(samples, sample_rate, TARGET_SAMPLE_RATE);
-        audio::high_pass(&mut samples, TARGET_SAMPLE_RATE, HIGH_PASS_HZ);
+    fn begin(&mut self) {
+        self.vad.reset();
+        self.resampler = None;
+        self.high_pass = HighPass::new(TARGET_SAMPLE_RATE, HIGH_PASS_HZ);
+        self.transcript.clear();
+        self.samples.clear();
+        self.sample_rate = 0;
+        self.vad_cursor = 0;
+        self.process_end = 0;
+    }
 
-        let mut samples = self.denoise(&samples);
-        let segments = self.segments(&samples);
-        if segments.is_empty() {
+    fn push(&mut self, samples: &[f32], sample_rate: u32) {
+        if samples.is_empty() {
+            return;
+        }
+
+        if self.sample_rate != sample_rate {
+            self.sample_rate = sample_rate;
+            self.resampler = match Samplerate::new(
+                ConverterType::SincBestQuality,
+                sample_rate,
+                TARGET_SAMPLE_RATE,
+                1,
+            ) {
+                Ok(resampler) => Some(resampler),
+                Err(err) => {
+                    eprintln!("failed to create resampler: {err}");
+                    None
+                }
+            };
+        }
+
+        let Some(resampler) = &self.resampler else {
+            return;
+        };
+        let mut samples = match resampler.process(samples) {
+            Ok(samples) => samples,
+            Err(err) => {
+                eprintln!("resample failed: {err}");
+                return;
+            }
+        };
+        if samples.is_empty() {
+            return;
+        }
+        self.high_pass.process(&mut samples);
+        self.samples.extend_from_slice(&samples);
+
+        while self.samples.len() - self.vad_cursor >= VAD_CHUNK {
+            let delta = &self.samples[self.vad_cursor..self.vad_cursor + VAD_CHUNK];
+            self.vad.accept_waveform(delta);
+            self.vad_cursor += VAD_CHUNK;
+        }
+
+        self.collect();
+    }
+
+    fn end(&mut self) -> String {
+        if let Some(resampler) = &self.resampler {
+            match resampler.process_last(&[]) {
+                Ok(mut samples) => {
+                    self.high_pass.process(&mut samples);
+                    self.samples.extend_from_slice(&samples);
+                }
+                Err(err) => {
+                    eprintln!("resample flush failed: {err}");
+                }
+            }
+        }
+
+        if self.vad_cursor < self.samples.len() {
+            let delta = &self.samples[self.vad_cursor..];
+            self.vad.accept_waveform(delta);
+            self.vad_cursor = self.samples.len();
+        }
+        self.vad.flush();
+
+        self.collect();
+
+        let content = mem::take(&mut self.transcript);
+        let content = content.trim();
+        if content.is_empty() {
             return String::new();
         }
 
+        self.refiner
+            .refine(content)
+            .unwrap_or_else(|_| content.to_string())
+    }
+
+    fn collect(&mut self) {
+        while let Some(segment) = self.vad.front() {
+            let start = segment.start().max(0) as usize;
+            let end = start + segment.n().max(0) as usize;
+            self.vad.pop();
+            self.process(start, end);
+        }
+    }
+
+    fn process(&mut self, start: usize, end: usize) {
+        let tail = (SEGMENT_TAIL_MARGIN_SECONDS * TARGET_SAMPLE_RATE as f32) as usize;
+
+        let start = start.max(self.process_end);
+        let end = (end + tail).min(self.samples.len());
+        if end <= start {
+            return;
+        }
+        self.process_end = end;
+
+        let mut samples = self.denoise(&self.samples[start..end]);
         audio::normalize(&mut samples, TARGET_RMS_DBFS, MAX_GAIN_DB);
         audio::limit_peak(&mut samples, PEAK_CEILING_DBFS);
 
-        let content = self.recognize(&samples, &segments);
-        if content.trim().is_empty() {
-            return String::new();
+        let text = self.recognize(&samples);
+        if !text.is_empty() {
+            self.transcript.push_str(&text);
         }
-
-        self.refiner.refine(&content).unwrap_or(content)
     }
 
-    fn recognize(&self, samples: &[f32], segments: &[Range<usize>]) -> String {
-        let mut parts: Vec<String> = Vec::new();
-        for segment in segments {
-            let stream = self.asr.create_stream();
-            stream.accept_waveform(TARGET_SAMPLE_RATE as i32, &samples[segment.clone()]);
+    fn recognize(&self, samples: &[f32]) -> String {
+        let stream = self.asr.create_stream();
+        stream.accept_waveform(TARGET_SAMPLE_RATE as i32, samples);
 
-            self.asr.decode(&stream);
+        self.asr.decode(&stream);
 
-            let text = stream
-                .get_result()
-                .map(|result| strip_control_prefix(result.text.trim()))
-                .unwrap_or_default();
-            if !text.is_empty() {
-                parts.push(text);
-            }
-        }
-        parts.join("")
-    }
-
-    fn segments(&self, samples: &[f32]) -> Vec<Range<usize>> {
-        self.vad.reset();
-
-        let mut detected: Vec<(usize, usize)> = Vec::new();
-        let mut collect_segments = || {
-            while let Some(segment) = self.vad.front() {
-                let start = segment.start().max(0) as usize;
-                let end = start + segment.n().max(0) as usize;
-                detected.push((start, end));
-                self.vad.pop();
-            }
-        };
-
-        for chunk in samples.chunks(512) {
-            self.vad.accept_waveform(chunk);
-            collect_segments();
-        }
-        self.vad.flush();
-        collect_segments();
-
-        if detected.is_empty() {
-            return Vec::new();
-        }
-
-        let margin = (SEGMENT_MARGIN_SECONDS * TARGET_SAMPLE_RATE as f32) as usize;
-        let merge_gap = (MERGE_GAP_SECONDS * TARGET_SAMPLE_RATE as f32) as usize;
-        let max_chunk = (MAX_CHUNK_SECONDS * TARGET_SAMPLE_RATE as f32) as usize;
-
-        let mut merged: Vec<(usize, usize)> = Vec::with_capacity(detected.len());
-        for &(start, end) in &detected {
-            let start = start.saturating_sub(margin);
-            let end = (end + margin).min(samples.len());
-            match merged.last_mut() {
-                Some(prev) if start <= prev.1 + merge_gap => prev.1 = prev.1.max(end),
-                _ => merged.push((start, end)),
-            }
-        }
-
-        let mut segments = Vec::new();
-        for (start, end) in merged {
-            let mut chunk_start = start;
-            while end - chunk_start > max_chunk {
-                segments.push(chunk_start..chunk_start + max_chunk);
-                chunk_start += max_chunk;
-            }
-            if chunk_start < end {
-                segments.push(chunk_start..end);
-            }
-        }
-
-        segments
+        stream
+            .get_result()
+            .map(|result| strip_control_prefix(result.text.trim()))
+            .unwrap_or_default()
     }
 
     fn denoise(&self, samples: &[f32]) -> Vec<f32> {
         if samples.is_empty() {
             return Vec::new();
         }
+
         let result = self.denoiser.run(samples, TARGET_SAMPLE_RATE as i32);
         if result.samples.is_empty() {
             samples.to_vec()
