@@ -117,7 +117,7 @@ impl Recognizer {
 }
 
 const TARGET_SAMPLE_RATE: u32 = 16_000;
-const VAD_CHUNK: usize = 512;
+const VAD_CHUNK_SIZE: usize = 512;
 
 const HIGH_PASS_HZ: f32 = 100.0;
 const TARGET_RMS_DBFS: f32 = -20.0;
@@ -261,10 +261,10 @@ impl RecognizerInner {
         self.high_pass.process(&mut samples);
         self.samples.extend_from_slice(&samples);
 
-        while self.samples.len() - self.vad_cursor >= VAD_CHUNK {
-            let delta = &self.samples[self.vad_cursor..self.vad_cursor + VAD_CHUNK];
+        while self.samples.len() - self.vad_cursor >= VAD_CHUNK_SIZE {
+            let delta = &self.samples[self.vad_cursor..self.vad_cursor + VAD_CHUNK_SIZE];
             self.vad.accept_waveform(delta);
-            self.vad_cursor += VAD_CHUNK;
+            self.vad_cursor += VAD_CHUNK_SIZE;
         }
 
         self.collect();
