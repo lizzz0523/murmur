@@ -134,10 +134,11 @@ impl Refiner {
 
         let prompt = self.build_prompt(content, output_tail)?;
         let tokens = self.model.str_to_token(&prompt, AddBos::Always)?;
-        let content_tokens = self.model.str_to_token(content, AddBos::Never)?.len();
-        let max_new_tokens = (content_tokens + 64).min(MAX_NEW_TOKENS_CAP);
+        let content_tokens = self.model.str_to_token(content, AddBos::Never)?;
+        let output_token_budget = (content_tokens.len() + 64).min(MAX_NEW_TOKENS_CAP);
 
-        if tokens.len() + max_new_tokens + OUTPUT_MARGIN > CONTEXT_SIZE as usize {
+        // 输入占用 + 输出预留 + 安全边距 <= 上下文窗口
+        if tokens.len() + output_token_budget + OUTPUT_MARGIN > CONTEXT_SIZE as usize {
             if let Some((left, right)) = split_half(content) {
                 let left_out = self.refine_window(context, &left, output_tail)?;
                 let left_out_tail = tail_of(&format!("{output_tail}{left_out}"), TAIL_CHARS);
@@ -147,7 +148,7 @@ impl Refiner {
             bail!("refiner window does not fit context window");
         }
 
-        let generated = self.generate(context, &tokens, max_new_tokens)?;
+        let generated = self.generate(context, &tokens, output_token_budget)?;
         Ok(strip_reasoning(&generated).trim().to_string())
     }
 
@@ -175,7 +176,7 @@ impl Refiner {
         &self,
         context: &mut LlamaContext,
         tokens: &[LlamaToken],
-        max_new_tokens: usize,
+        output_token_budget: usize,
     ) -> anyhow::Result<String> {
         context.clear_kv_cache();
 
@@ -187,7 +188,7 @@ impl Refiner {
         let mut decoder = encoding_rs::UTF_8.new_decoder();
         let mut output = String::new();
 
-        for pos in (tokens.len() as i32..).take(max_new_tokens) {
+        for pos in (tokens.len() as i32..).take(output_token_budget) {
             let token = sampler.sample(context, -1);
             sampler.accept(token);
             if self.model.is_eog_token(token) {
