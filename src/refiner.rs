@@ -65,22 +65,26 @@ static LLAMA_BACKEND: LazyLock<LlamaBackend> =
     LazyLock::new(|| LlamaBackend::init().expect("failed to init llama backend"));
 
 pub(crate) struct Refiner {
-    model: &'static LlamaModel,
+    // Drop order matters: `context` borrows `model`, so it must be dropped first.
+    context: RefCell<LlamaContext<'static>>,
+
+    model: Box<LlamaModel>,
     template: LlamaChatTemplate,
     system_tokens: Vec<LlamaToken>,
-    context: RefCell<LlamaContext<'static>>,
 }
 
 impl Refiner {
     pub(crate) fn create(model_path: &Path) -> anyhow::Result<Self> {
         send_logs_to_tracing(LogOptions::default().with_logs_enabled(false));
 
-        let model = LlamaModel::load_from_file(
-            &LLAMA_BACKEND,
-            model_path,
-            &LlamaModelParams::default().with_n_gpu_layers(999),
-        )
-        .context("failed to load refiner model")?;
+        let model = Box::new(
+            LlamaModel::load_from_file(
+                &LLAMA_BACKEND,
+                model_path,
+                &LlamaModelParams::default().with_n_gpu_layers(999),
+            )
+            .context("failed to load refiner model")?,
+        );
 
         let template = model
             .chat_template(None)
@@ -90,22 +94,28 @@ impl Refiner {
         let system_prompt = model.apply_chat_template(&template, &[system], false)?;
         let system_tokens = model.str_to_token(&system_prompt, AddBos::Always)?;
 
-        let model: &'static LlamaModel = Box::leak(Box::new(model));
+        let mut context = {
+            // SAFETY: `model` is boxed (stable heap address) and stored in `Refiner::model`,
+            // which is dropped after `Refiner::context` (field declaration order), so the
+            // context never outlives the model it borrows.
+            let model_ref: &'static LlamaModel = unsafe { &*(&*model as *const LlamaModel) };
 
-        let mut context = model.new_context(
-            &LLAMA_BACKEND,
-            LlamaContextParams::default().with_n_ctx(NonZeroU32::new(CONTEXT_SIZE)),
-        )?;
+            model_ref.new_context(
+                &LLAMA_BACKEND,
+                LlamaContextParams::default().with_n_ctx(NonZeroU32::new(CONTEXT_SIZE)),
+            )?
+        };
 
         let mut batch = LlamaBatch::new(system_tokens.len().max(1), 1);
         batch.add_sequence(&system_tokens, 0, false)?;
         context.decode(&mut batch)?;
 
         Ok(Self {
+            context: RefCell::new(context),
+
             model,
             template,
             system_tokens,
-            context: RefCell::new(context),
         })
     }
 
