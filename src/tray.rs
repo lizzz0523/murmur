@@ -11,18 +11,24 @@ use tray_icon::{TrayIcon, TrayIconBuilder};
 use crate::recorder::InputDevice;
 
 const DEVICE_PREFIX: &str = "device:";
+const HISTORY_PREFIX: &str = "history:";
+const HISTORY_LABEL_MAX: usize = 40;
 
 pub enum TrayAction {
     SelectDevice(String),
+    CopyText(String),
     RefreshDevices,
     Quit,
 }
 
 pub struct Tray {
     _icon: TrayIcon,
-    actions: Arc<Mutex<VecDeque<TrayAction>>>,
-    submenu: Submenu,
+    menu: Menu,
+    device_submenu: Submenu,
     device_items: RefCell<Vec<(String, CheckMenuItem)>>,
+    history_items: RefCell<Vec<MenuItem>>,
+    history_decorations: RefCell<Vec<PredefinedMenuItem>>,
+    actions: Arc<Mutex<VecDeque<TrayAction>>>,
 }
 
 impl Tray {
@@ -33,19 +39,18 @@ impl Tray {
         let quit = MenuItem::new("退出", true, None);
         let quit_id = quit.id().clone();
 
-        let submenu = Submenu::new("麦克风", true);
+        let device_submenu = Submenu::new("麦克风", true);
 
         let menu = Menu::new();
-        menu.append(&submenu)?;
+        menu.append(&device_submenu)?;
         menu.append(&refresh)?;
-        menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&quit)?;
 
         let tray = TrayIconBuilder::new()
             .with_icon(load_icon()?)
             .with_icon_as_template(true)
             .with_tooltip("murmur")
-            .with_menu(Box::new(menu))
+            .with_menu(Box::new(menu.clone()))
             .build()?;
 
         let actions = Arc::new(Mutex::new(VecDeque::new()));
@@ -60,6 +65,8 @@ impl Tray {
                 TrayAction::RefreshDevices
             } else if let Some(id) = raw.strip_prefix(DEVICE_PREFIX) {
                 TrayAction::SelectDevice(id.to_string())
+            } else if let Some(text) = raw.strip_prefix(HISTORY_PREFIX) {
+                TrayAction::CopyText(text.to_string())
             } else {
                 return;
             };
@@ -69,9 +76,12 @@ impl Tray {
 
         Ok(Self {
             _icon: tray,
-            actions,
-            submenu,
+            menu,
+            device_submenu,
             device_items: RefCell::new(Vec::new()),
+            history_items: RefCell::new(Vec::new()),
+            history_decorations: RefCell::new(Vec::new()),
+            actions,
         })
     }
 
@@ -85,7 +95,7 @@ impl Tray {
         let mut items = self.device_items.borrow_mut();
 
         for (_, item) in items.iter() {
-            let _ = self.submenu.remove(item);
+            let _ = self.device_submenu.remove(item);
         }
         items.clear();
 
@@ -105,14 +115,79 @@ impl Tray {
                 device.id == current_id,
                 None,
             );
-            if self.submenu.append(&item).is_ok() {
+            if self.device_submenu.append(&item).is_ok() {
                 items.push((device.id.clone(), item));
             }
         }
     }
 
+    pub fn set_history(&self, history: &VecDeque<String>) {
+        const BASE: usize = 2;
+
+        for decoration in self.history_decorations.borrow().iter() {
+            let _ = self.menu.remove(decoration);
+        }
+        for item in self.history_items.borrow().iter() {
+            let _ = self.menu.remove(item);
+        }
+        self.history_decorations.borrow_mut().clear();
+        self.history_items.borrow_mut().clear();
+
+        let mut decorations = self.history_decorations.borrow_mut();
+        let mut insert_at = BASE;
+
+        let leading = PredefinedMenuItem::separator();
+        if self.menu.insert(&leading, insert_at).is_ok() {
+            decorations.push(leading);
+        }
+        insert_at += 1;
+
+        let header = PredefinedMenuItem::section_header("最近记录");
+        if self.menu.insert(&header, insert_at).is_ok() {
+            decorations.push(header);
+        }
+        insert_at += 1;
+
+        let mut items = self.history_items.borrow_mut();
+        if history.is_empty() {
+            let placeholder = MenuItem::new("（暂无记录）", false, None);
+            if self.menu.insert(&placeholder, insert_at).is_ok() {
+                items.push(placeholder);
+            }
+            insert_at += 1;
+        } else {
+            for text in history {
+                let item = MenuItem::with_id(
+                    MenuId::new(format!("{HISTORY_PREFIX}{text}")),
+                    truncate(text, HISTORY_LABEL_MAX),
+                    true,
+                    None,
+                );
+                if self.menu.insert(&item, insert_at).is_ok() {
+                    items.push(item);
+                }
+                insert_at += 1;
+            }
+        }
+
+        let trailing = PredefinedMenuItem::separator();
+        if self.menu.insert(&trailing, insert_at).is_ok() {
+            decorations.push(trailing);
+        }
+    }
+
     pub fn poll(&self) -> Option<TrayAction> {
         self.actions.lock().unwrap().pop_front()
+    }
+}
+
+fn truncate(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{truncated}…")
+    } else {
+        truncated
     }
 }
 

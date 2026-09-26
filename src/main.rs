@@ -88,12 +88,13 @@ fn run() -> anyhow::Result<()> {
             .with_position(((sw - w) / 2.0, sh - h - 40.0))
             .with_icon(load_icon())
             .with_resizable(false),
+        persist_window: false,
         ..Default::default()
     };
     eframe::run_native(
         "murmur",
         native_options,
-        Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx)))),
+        Box::new(|cc| Ok(Box::new(App::new(cc)))),
     )?;
 
     Ok(())

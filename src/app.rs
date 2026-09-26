@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use eframe::egui;
@@ -6,6 +7,9 @@ use enigo::{Enigo, Keyboard};
 use crate::hotkey::Hotkey;
 use crate::pipeline::{Pipeline, PipelineEvent};
 use crate::tray::{Tray, TrayAction};
+
+const HISTORY_LIMIT: usize = 10;
+const HISTORY_KEY: &str = "history";
 
 enum State {
     Loading,
@@ -21,15 +25,23 @@ pub struct App {
     pipeline: Pipeline,
     state: State,
     enigo: Enigo,
+    history: VecDeque<String>,
 }
 
 impl App {
-    pub fn new(ctx: &egui::Context) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let ctx = &cc.egui_ctx;
         let tray = Tray::new(ctx).unwrap();
         let hotkey = Hotkey::new(ctx).unwrap();
         let pipeline = Pipeline::new().unwrap();
 
         tray.set_devices(&pipeline.list_devices(), pipeline.current_device());
+
+        let history = cc
+            .storage
+            .and_then(|storage| eframe::get_value::<VecDeque<String>>(storage, HISTORY_KEY))
+            .unwrap_or_default();
+        tray.set_history(&history);
 
         Self {
             tray,
@@ -37,6 +49,7 @@ impl App {
             pipeline,
             state: State::Loading,
             enigo: Enigo::new(&enigo::Settings::default()).unwrap(),
+            history,
         }
     }
 
@@ -47,6 +60,9 @@ impl App {
                 PipelineEvent::Recognized(text) => {
                     if !text.trim().is_empty() {
                         let _ = self.enigo.text(&text);
+                        self.history.push_front(text);
+                        self.history.truncate(HISTORY_LIMIT);
+                        self.tray.set_history(&self.history);
                     }
                     self.state = State::Ready;
                 }
@@ -93,6 +109,9 @@ impl App {
                         &self.pipeline.list_devices(),
                         self.pipeline.current_device(),
                     );
+                }
+                TrayAction::CopyText(text) => {
+                    ctx.copy_text(text);
                 }
                 TrayAction::Quit => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -207,6 +226,10 @@ impl App {
 impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         egui::Rgba::TRANSPARENT.to_array()
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, HISTORY_KEY, &self.history);
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
