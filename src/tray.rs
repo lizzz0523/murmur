@@ -124,16 +124,19 @@ impl Tray {
     pub fn set_history(&self, history: &VecDeque<String>) {
         const BASE: usize = 2;
 
-        for decoration in self.history_decorations.borrow().iter() {
+        let mut decorations = self.history_decorations.borrow_mut();
+        let mut items = self.history_items.borrow_mut();
+
+        for decoration in decorations.iter() {
             let _ = self.menu.remove(decoration);
         }
-        for item in self.history_items.borrow().iter() {
+        decorations.clear();
+
+        for item in items.iter() {
             let _ = self.menu.remove(item);
         }
-        self.history_decorations.borrow_mut().clear();
-        self.history_items.borrow_mut().clear();
+        items.clear();
 
-        let mut decorations = self.history_decorations.borrow_mut();
         let mut insert_at = BASE;
 
         let leading = PredefinedMenuItem::separator();
@@ -148,7 +151,6 @@ impl Tray {
         }
         insert_at += 1;
 
-        let mut items = self.history_items.borrow_mut();
         if history.is_empty() {
             let placeholder = MenuItem::new("（暂无记录）", false, None);
             if self.menu.insert(&placeholder, insert_at).is_ok() {
