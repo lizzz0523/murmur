@@ -3162,6 +3162,7 @@ dependencies = [
  "sherpa-onnx",
  "tokio",
  "tray-icon",
+ "unicode-width",
 ]
 
 [[package]]

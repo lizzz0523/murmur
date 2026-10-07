@@ -7,12 +7,13 @@ use tray_icon::menu::{
     CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
 };
 use tray_icon::{TrayIcon, TrayIconBuilder};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::recorder::InputDevice;
 
 const DEVICE_PREFIX: &str = "device:";
 const HISTORY_PREFIX: &str = "history:";
-const HISTORY_LABEL_MAX: usize = 40;
+const HISTORY_LABEL_WIDTH: usize = 30;
 
 pub enum TrayAction {
     SelectDevice(String),
@@ -161,7 +162,7 @@ impl Tray {
             for text in history {
                 let item = MenuItem::with_id(
                     MenuId::new(format!("{HISTORY_PREFIX}{text}")),
-                    truncate(text, HISTORY_LABEL_MAX),
+                    truncate(text, HISTORY_LABEL_WIDTH),
                     true,
                     None,
                 );
@@ -183,14 +184,25 @@ impl Tray {
     }
 }
 
-fn truncate(text: &str, max_chars: usize) -> String {
-    let mut chars = text.chars();
-    let truncated: String = chars.by_ref().take(max_chars).collect();
-    if chars.next().is_some() {
-        format!("{truncated}…")
-    } else {
-        truncated
+fn truncate(text: &str, max_width: usize) -> String {
+    if text.width() <= max_width {
+        return text.to_string();
     }
+
+    let budget = max_width.saturating_sub(1);
+    let mut width = 0usize;
+    let mut end = 0usize;
+
+    for (idx, ch) in text.char_indices() {
+        let ch_width = ch.width().unwrap_or(0);
+        if width + ch_width > budget {
+            break;
+        }
+        width += ch_width;
+        end = idx + ch.len_utf8();
+    }
+
+    format!("{}…", &text[..end])
 }
 
 fn load_icon() -> anyhow::Result<tray_icon::Icon> {

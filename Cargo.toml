@@ -18,6 +18,7 @@ samplerate = "0.2.4"
 sherpa-onnx = "1.13.8"
 tokio = { version = "1.53.1", features = ["full"] }
 tray-icon = { version = "0.25.1", default-features = false }
+unicode-width = "0.2"
 
 [profile.release]
 opt-level = 'z'
