@@ -22,10 +22,10 @@ enum State {
 pub struct App {
     tray: Tray,
     hotkey: Hotkey,
+    history: VecDeque<String>,
     pipeline: Pipeline,
     state: State,
     enigo: Enigo,
-    history: VecDeque<String>,
 }
 
 impl App {
@@ -41,15 +41,16 @@ impl App {
             .storage
             .and_then(|storage| eframe::get_value::<VecDeque<String>>(storage, HISTORY_KEY))
             .unwrap_or_default();
+
         tray.set_history(&history);
 
         Self {
             tray,
             hotkey,
+            history,
             pipeline,
             state: State::Loading,
             enigo: Enigo::new(&enigo::Settings::default()).unwrap(),
-            history,
         }
     }
 

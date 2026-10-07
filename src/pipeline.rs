@@ -46,15 +46,15 @@ impl Pipeline {
                     events.push(PipelineEvent::Failed(err));
                 }
             }
-        }
+        } else {
+            let samples = self.recorder.poll();
+            if self.active && !samples.is_empty() {
+                self.recognizer.push(samples, self.recorder.sample_rate());
+            }
 
-        let samples = self.recorder.poll();
-        if self.active && !samples.is_empty() {
-            self.recognizer.push(samples, self.recorder.sample_rate());
-        }
-
-        while let Some(text) = self.recognizer.poll() {
-            events.push(PipelineEvent::Recognized(text));
+            while let Some(text) = self.recognizer.poll() {
+                events.push(PipelineEvent::Recognized(text));
+            }
         }
 
         events
