@@ -3,9 +3,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
-use tray_icon::menu::{
-    CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem,
-};
+use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{TrayIcon, TrayIconBuilder};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -119,7 +117,6 @@ impl Tray {
         }
         insert_at += 1;
 
-        let mut inserted = 0usize;
         for device in devices {
             if device.id.is_empty() {
                 continue;
@@ -138,12 +135,11 @@ impl Tray {
             );
             if self.menu.insert(&item, insert_at).is_ok() {
                 items.push((device.id.clone(), item));
-                inserted += 1;
             }
             insert_at += 1;
         }
 
-        if inserted == 0 {
+        if items.is_empty() {
             let item = MenuItem::new("（无可用设备）", false, None);
             if self.menu.insert(&item, insert_at).is_ok() {
                 placeholder.push(item);
