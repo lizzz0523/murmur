@@ -26,3 +26,13 @@ lto = true
 codegen-units = 1
 panic = 'abort'
 strip = true
+
+[package.metadata.bundle]
+name = "Murmur"
+identifier = "com.example.murmur"
+icon = ["assets/appicon.icns"]
+version = "0.1.0"
+resources = ["assets"]
+
+[package.metadata.bundle.osx]
+info_plist_exts = ["bundle/Info.plist.ext"]
