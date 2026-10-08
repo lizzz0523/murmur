@@ -144,12 +144,6 @@ impl Tray {
             if self.menu.insert(&item, insert_at).is_ok() {
                 placeholder.push(item);
             }
-            insert_at += 1;
-        }
-
-        let trailing = PredefinedMenuItem::separator();
-        if self.menu.insert(&trailing, insert_at).is_ok() {
-            decorations.push(trailing);
         }
     }
 
