@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 use tray_icon::menu::{
-    CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
+    CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem,
 };
 use tray_icon::{TrayIcon, TrayIconBuilder};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -25,8 +25,9 @@ pub enum TrayAction {
 pub struct Tray {
     _icon: TrayIcon,
     menu: Menu,
-    device_submenu: Submenu,
     device_items: RefCell<Vec<(String, CheckMenuItem)>>,
+    device_decorations: RefCell<Vec<PredefinedMenuItem>>,
+    device_placeholder: RefCell<Vec<MenuItem>>,
     history_items: RefCell<Vec<MenuItem>>,
     history_decorations: RefCell<Vec<PredefinedMenuItem>>,
     actions: Arc<Mutex<VecDeque<TrayAction>>>,
@@ -40,10 +41,7 @@ impl Tray {
         let quit = MenuItem::new("退出", true, None);
         let quit_id = quit.id().clone();
 
-        let device_submenu = Submenu::new("麦克风", true);
-
         let menu = Menu::new();
-        menu.append(&device_submenu)?;
         menu.append(&refresh)?;
         menu.append(&quit)?;
 
@@ -78,8 +76,9 @@ impl Tray {
         Ok(Self {
             _icon: tray,
             menu,
-            device_submenu,
             device_items: RefCell::new(Vec::new()),
+            device_decorations: RefCell::new(Vec::new()),
+            device_placeholder: RefCell::new(Vec::new()),
             history_items: RefCell::new(Vec::new()),
             history_decorations: RefCell::new(Vec::new()),
             actions,
@@ -94,12 +93,33 @@ impl Tray {
 
     pub fn set_devices(&self, devices: &[InputDevice], current_id: &str) {
         let mut items = self.device_items.borrow_mut();
+        let mut decorations = self.device_decorations.borrow_mut();
+        let mut placeholder = self.device_placeholder.borrow_mut();
+
+        for decoration in decorations.iter() {
+            let _ = self.menu.remove(decoration);
+        }
+        decorations.clear();
 
         for (_, item) in items.iter() {
-            let _ = self.device_submenu.remove(item);
+            let _ = self.menu.remove(item);
         }
         items.clear();
 
+        for item in placeholder.iter() {
+            let _ = self.menu.remove(item);
+        }
+        placeholder.clear();
+
+        let mut insert_at = 0;
+
+        let header = PredefinedMenuItem::section_header("麦克风");
+        if self.menu.insert(&header, insert_at).is_ok() {
+            decorations.push(header);
+        }
+        insert_at += 1;
+
+        let mut inserted = 0usize;
         for device in devices {
             if device.id.is_empty() {
                 continue;
@@ -116,15 +136,28 @@ impl Tray {
                 device.id == current_id,
                 None,
             );
-            if self.device_submenu.append(&item).is_ok() {
+            if self.menu.insert(&item, insert_at).is_ok() {
                 items.push((device.id.clone(), item));
+                inserted += 1;
             }
+            insert_at += 1;
+        }
+
+        if inserted == 0 {
+            let item = MenuItem::new("（无可用设备）", false, None);
+            if self.menu.insert(&item, insert_at).is_ok() {
+                placeholder.push(item);
+            }
+            insert_at += 1;
+        }
+
+        let trailing = PredefinedMenuItem::separator();
+        if self.menu.insert(&trailing, insert_at).is_ok() {
+            decorations.push(trailing);
         }
     }
 
     pub fn set_history(&self, history: &VecDeque<String>) {
-        const BASE: usize = 2;
-
         let mut decorations = self.history_decorations.borrow_mut();
         let mut items = self.history_items.borrow_mut();
 
@@ -138,7 +171,10 @@ impl Tray {
         }
         items.clear();
 
-        let mut insert_at = BASE;
+        let mut insert_at = self.device_decorations.borrow().len()
+            + self.device_items.borrow().len()
+            + self.device_placeholder.borrow().len()
+            + 1;
 
         let leading = PredefinedMenuItem::separator();
         if self.menu.insert(&leading, insert_at).is_ok() {
