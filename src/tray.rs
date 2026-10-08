@@ -184,25 +184,25 @@ impl Tray {
         }
         insert_at += 1;
 
-        if history.is_empty() {
-            let placeholder = MenuItem::new("（暂无记录）", false, None);
-            if self.menu.insert(&placeholder, insert_at).is_ok() {
-                items.push(placeholder);
+        for text in history {
+            let item = MenuItem::with_id(
+                MenuId::new(format!("{HISTORY_PREFIX}{text}")),
+                truncate(text, HISTORY_LABEL_WIDTH),
+                true,
+                None,
+            );
+            if self.menu.insert(&item, insert_at).is_ok() {
+                items.push(item);
             }
             insert_at += 1;
-        } else {
-            for text in history {
-                let item = MenuItem::with_id(
-                    MenuId::new(format!("{HISTORY_PREFIX}{text}")),
-                    truncate(text, HISTORY_LABEL_WIDTH),
-                    true,
-                    None,
-                );
-                if self.menu.insert(&item, insert_at).is_ok() {
-                    items.push(item);
-                }
-                insert_at += 1;
+        }
+
+        if items.is_empty() {
+            let item = MenuItem::new("（暂无记录）", false, None);
+            if self.menu.insert(&item, insert_at).is_ok() {
+                items.push(item);
             }
+            insert_at += 1;
         }
 
         let trailing = PredefinedMenuItem::separator();
