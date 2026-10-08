@@ -31,7 +31,6 @@ strip = true
 name = "Murmur"
 identifier = "com.example.murmur"
 icon = ["assets/appicon.icns"]
-version = "0.1.0"
 resources = ["assets"]
 
 [package.metadata.bundle.osx]

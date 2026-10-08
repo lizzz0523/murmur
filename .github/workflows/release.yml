@@ -1,0 +1,181 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            artifact: murmur-x86_64-apple-darwin
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            artifact: murmur-aarch64-apple-darwin
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          if [ "$tag" != "$ver" ]; then
+            echo "::error::tag v$tag does not match Cargo.toml version $ver"
+            exit 1
+          fi
+          echo "version $ver"
+
+      - name: Configure libclang
+        run: |
+          if brew list llvm >/dev/null 2>&1; then
+            echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
+          fi
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
+
+      - name: Install cargo-bundle
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: cargo-bundle
+
+      - name: Bundle app
+        run: cargo bundle --release --target ${{ matrix.target }}
+
+      - name: Ad-hoc code sign
+        run: |
+          app="target/${{ matrix.target }}/release/bundle/osx/Murmur.app"
+          codesign --deep --force --sign - "$app"
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent \
+            "target/${{ matrix.target }}/release/bundle/osx/Murmur.app" \
+            "dist/${{ matrix.artifact }}.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}.zip
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/murmur-x86_64-apple-darwin/murmur-x86_64-apple-darwin.zip
+            artifacts/murmur-aarch64-apple-darwin/murmur-aarch64-apple-darwin.zip
+
+  update-homebrew:
+    name: Update Homebrew Tap
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Extract version
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Calculate SHA256
+        id: sha
+        run: |
+          ARM_URL="https://github.com/lizzz0523/murmur/releases/download/${GITHUB_REF_NAME}/murmur-aarch64-apple-darwin.zip"
+          INTEL_URL="https://github.com/lizzz0523/murmur/releases/download/${GITHUB_REF_NAME}/murmur-x86_64-apple-darwin.zip"
+
+          ARM_SHA=$(curl -sL "$ARM_URL" | shasum -a 256 | cut -d' ' -f1)
+          INTEL_SHA=$(curl -sL "$INTEL_URL" | shasum -a 256 | cut -d' ' -f1)
+
+          echo "arm=${ARM_SHA}" >> "$GITHUB_OUTPUT"
+          echo "intel=${INTEL_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Update Homebrew cask
+        uses: actions/checkout@v4
+        with:
+          repository: lizzz0523/homebrew-devkit
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Generate and commit cask
+        run: |
+          VERSION="${{ steps.version.outputs.value }}"
+          ARM_SHA="${{ steps.sha.outputs.arm }}"
+          INTEL_SHA="${{ steps.sha.outputs.intel }}"
+
+          cat > Casks/murmur.rb <<EOF
+          cask "murmur" do
+            version "${VERSION}"
+            sha256 arm:   "${ARM_SHA}",
+                   intel: "${INTEL_SHA}"
+
+            on_arm do
+              url "https://github.com/lizzz0523/murmur/releases/download/v" + version + "/murmur-aarch64-apple-darwin.zip"
+            end
+            on_intel do
+              url "https://github.com/lizzz0523/murmur/releases/download/v" + version + "/murmur-x86_64-apple-darwin.zip"
+            end
+
+            name "Murmur"
+            desc "Local on-device voice input for macOS"
+            homepage "https://github.com/lizzz0523/murmur"
+            app "Murmur.app"
+
+            caveats <<~EOS
+              Murmur is ad-hoc signed (not notarized). If macOS blocks the first launch, run:
+                xattr -dr com.apple.quarantine /Applications/Murmur.app
+              or click "Open Anyway" in System Settings -> Privacy & Security.
+
+              You must also grant Microphone, Input Monitoring, and Accessibility
+              permissions in System Settings -> Privacy & Security before use.
+            EOS
+          end
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/murmur.rb
+          git commit -m "murmur ${VERSION}"
+          git push
