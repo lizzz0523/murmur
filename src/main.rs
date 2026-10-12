@@ -78,6 +78,8 @@ fn run() -> anyhow::Result<()> {
     let (sw, sh) = get_resolution();
     let (w, h) = get_window_size();
 
+    let sh = get_safe_screen_height(sh).unwrap_or(sh);
+
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_transparent(true)
@@ -113,4 +115,17 @@ fn get_resolution() -> (f32, f32) {
     let height = bounds.size.height;
 
     (width as f32, height as f32)
+}
+
+fn get_safe_screen_height(screen_height: f32) -> Option<f32> {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSScreen;
+
+    let mtm = MainThreadMarker::new()?;
+    let screen = NSScreen::mainScreen(mtm)?;
+    let visible = screen.visibleFrame();
+
+    // NSScreen 使用左下角为原点的坐标系，而 egui/winit 使用左上角为原点。
+    // visible.origin.y 即 Dock 高度（Dock 隐藏或左右停靠时为 0）。
+    Some(screen_height - visible.origin.y as f32)
 }
