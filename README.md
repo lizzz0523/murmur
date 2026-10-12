@@ -34,6 +34,22 @@ macOS 上的本地语音输入工具：按住快捷键说话，边录边识别�
 - 从源码构建需要 `cmake` 与 `clang`（`llama-cpp-sys` 会用 cmake + bindgen 编译 llama.cpp，`libsamplerate-sys` 也会用 cmake 编译 libsamplerate）；若 bindgen 找不到 `libclang`，设置 `LIBCLANG_PATH` 指向包含 `libclang.dylib` 的目录。
 - CMake 4 及以上版本已由仓库内 `.cargo/config.toml` 的 `CMAKE_POLICY_VERSION_MINIMUM=3.5` 自动处理，无需手动设置。
 
+## 安装
+
+通过 Homebrew 安装（自动识别 Apple Silicon / Intel）：
+
+```bash
+brew install --cask lizzz0523/devkit/murmur
+```
+
+首次启动后需在「系统设置 → 隐私与安全性」中授权（见下方「构建与运行」）。Murmur 为临时签名（未公证），若 macOS 首次启动拦截，可执行：
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Murmur.app
+```
+
+或在「系统设置 → 隐私与安全性」中点击「仍要打开」。
+
 ## 构建与运行
 
 ```bash
